@@ -522,3 +522,20 @@ Example::
             rhov[${i}] = s[${i + 1}];
             v[${i}] = invrho*rhov[${i}];
         % endfor
+
+
+Not Yet Documented
+^^^^^^^^^^^^^^^^^^
+
+.. automodule:: pyfr.util
+    :members:
+    :undoc-members:
+
+.. automodule:: pyfr.backends
+    :members:
+    :undoc-members:
+
+.. automodule:: pyfr.rank_allocator
+    :members:
+    :undoc-members:
+

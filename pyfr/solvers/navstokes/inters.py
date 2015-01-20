@@ -98,6 +98,8 @@ class NavierStokesNoSlpIsotWallBCInters(NavierStokesBaseBCInters):
 class NavierStokesNoSlpAdiaWallBCInters(NavierStokesBaseBCInters):
     type = 'no-slp-adia-wall'
 
+class NavierStokesSlpAdiaWallBCInters(NavierStokesBaseBCInters):
+    type = 'slp-adia-wall'
 
 class NavierStokesCharRiemInvBCInters(NavierStokesBaseBCInters):
     type = 'char-riem-inv'

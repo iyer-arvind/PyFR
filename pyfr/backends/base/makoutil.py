@@ -66,11 +66,13 @@ def _locals(body):
 
 
 @supports_caller
-def macro(context, name, params):
+def macro(context, name, params, reimplement=False):
     # Check we have not already been defined
-    if name in context['_macros']:
-        raise RuntimeError('Attempt to redefine macro "{0}"'
-                           .format(name))
+    print name,params,reimplement
+    if(not reimplement):
+        if name in context['_macros']:
+            raise RuntimeError('Attempt to redefine macro "{0}": %s'
+                               .format(name,reimplement))
 
     # Split up the parameter list
     params = [p.strip() for p in params.split(',')]
@@ -95,6 +97,7 @@ def expand(context, name, *params):
     # Get the macro parameter list and the body
     mparams, body = context['_macros'][name]
 
+    print name,params
     # Validate
     if len(mparams) != len(params):
         raise ValueError('Invalid macro parameter list')

@@ -3,8 +3,8 @@
 <%namespace module='pyfr.backends.base.makoutil' name='pyfr'/>
 
 <%include file='pyfr.solvers.euler.kernels.rsolvers.${rsolver}'/>
-<%include file='pyfr.solvers.navstokes.kernels.bcs.${bctype}'/>
 <%include file='pyfr.solvers.navstokes.kernels.flux'/>
+<%include file='pyfr.solvers.navstokes.kernels.bcs.${bctype}'/>
 
 <% tau = c['ldg-tau'] %>
 
