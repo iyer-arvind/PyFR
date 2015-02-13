@@ -11,7 +11,7 @@ from pyfr.partitioners import BasePartitioner, get_partitioner_by_name
 from pyfr.readers import BaseReader, get_reader_by_name, get_reader_by_extn
 from pyfr.readers.native import read_pyfr_data
 from pyfr.util import subclasses
-
+from pyfr.io import H5FileIO
 
 def process_convert(args):
     # Get a suitable mesh reader instance
@@ -22,10 +22,13 @@ def process_convert(args):
         reader = get_reader_by_extn(extn, args.inmesh)
 
     # Get the mesh in the PyFR format
-    mesh = reader.to_pyfrm()
+    shapes,interfaces = reader.to_pyfrm()
 
     # Save to disk
-    np.savez(args.outmesh, **mesh)
+    with H5FileIO(args.outmesh,"w") as F:
+        F.createShapes(**shapes)
+        F.createInterfaces(**interfaces)
+    #np.savez(args.outmesh, **mesh)
 
 
 def process_partition(args):
@@ -85,7 +88,7 @@ def main():
     ap_convert = sp.add_parser('convert', help='convert --help')
     ap_convert.add_argument('inmesh', type=FileType('r'),
                             help='input mesh file')
-    ap_convert.add_argument('outmesh', type=FileType('wb'),
+    ap_convert.add_argument('outmesh', type=str,
                             help='output PyFR mesh file')
     types = sorted(cls.name for cls in subclasses(BaseReader))
     ap_convert.add_argument('-t', dest='type', choices=types,

@@ -252,7 +252,6 @@ class GmshReader(BaseReader):
         for pftype, faces in ffofaces.items():
             for f, n in chain.from_iterable(zip(f, n) for f, n in faces):
                 sn = tuple(n)
-
                 # See if the nodes are in resid
                 if sn in resid:
                     pairs[pftype].append([resid.pop(sn), f])
@@ -324,18 +323,18 @@ class GmshReader(BaseReader):
                       chain.from_iterable(pfpairs.values()))
 
         # Generate the internal connectivity array
-        con = list(pairs)
-
+        con = np.array(list(pairs),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
         # Generate boundary condition connectivity arrays
         bcon = {}
         for pbcrgn, pent in self._bfacespents.items():
             bcon[pbcrgn] = bf[pent]
 
         # Output
-        ret = {'con_p0': np.array(con, dtype='S4,i4,i1,i1').T}
+        ret={}
+        ret['internal']=con
 
         for k, v in bcon.items():
-            ret['bcon_{0}_p0'.format(k)] = np.array(v, dtype='S4,i4,i1,i1')
+            ret[k] = np.array(list(v),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
 
         return ret
 
@@ -364,12 +363,9 @@ class GmshReader(BaseReader):
             arr = arr.swapaxes(0, 1)
             arr = arr[..., :ndim]
 
-            spts['spt_{0}_p0'.format(petype)] = arr
+            spts[petype] = arr
 
         return spts
 
     def _to_raw_pyfrm(self):
-        rawm = {}
-        rawm.update(self._get_connectivity())
-        rawm.update(self._get_shape_points())
-        return rawm
+        return self._get_shape_points(),self._get_connectivity()

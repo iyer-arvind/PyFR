@@ -17,9 +17,4 @@ class BaseReader(object, metaclass=ABCMeta):
         pass
 
     def to_pyfrm(self):
-        mesh = self._to_raw_pyfrm()
-
-        # Add metadata
-        mesh['mesh_uuid'] = str(uuid.uuid4())
-
-        return mesh
+        return self._to_raw_pyfrm()
