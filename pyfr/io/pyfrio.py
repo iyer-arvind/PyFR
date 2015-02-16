@@ -27,11 +27,13 @@ class IO(object):
 
     def __createDefaultPartition(self):
         sc=self.shapeCounts()
-        partition={s:[np.arange(sc[s])] for s in sc}
-        self.createPartitioning('root',partition)
+        elements={s+"-0":np.arange(sc[s]) for s in sc}
+        interfaces={ i+'-0':self.getInterface(i) for i in self.getInterfaces()}
+        spts={i+'-0':self.getShapePoints(i) for i in self.shapes()}
+        self.createPartitioning('root',elements,interfaces,spts)
         
     @abstractmethod    
-    def createPartitioning(self,name,part):
+    def createPartitioning(self,name,elements,interfaces):
         pass
 
     @abstractmethod
@@ -46,8 +48,25 @@ class IO(object):
     def shapeCounts(self):
         pass
 
+    @abstractmethod
+    def getShapePoints(self,shape):
+        pass
+
     def getPartitioning(self,name):
         return self.Partitioning(name,self)
+
+    @abstractmethod
+    def getPartitionings(self):
+        return self.Partitioning(name,self)
+
+
+    @abstractmethod
+    def getInterface(self,name):
+        pass
+
+    @abstractmethod
+    def getInterfaces(self):
+        pass
 
     @abstractmethod
     def getPartitionsInPartitioning(self,partitioning):
@@ -59,7 +78,6 @@ class IO(object):
     def __exit__(self,type,value,traceback):
         self.close()
         return False
-
 
     class Partitioning(object):
         def __init__(self,name,io):
@@ -121,23 +139,58 @@ class H5FileIO(IO):
             intf.create_dataset(i,data=interfaces[i])
         super(H5FileIO,self).createInterfaces()
 
+    def getInterfaces(self):
+        return self._file['mesh']['interfaces'].keys()
 
-    def createPartitioning(self,name,part):
+    def getInterface(self,name):
+        T=np.array(self._file['mesh']['interfaces'][name])
+        dtype=[('type', 'U4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]
+        U=np.zeros_like(T,dtype=dtype)
+        for e,t in  dtype:
+            U[e]=T[e]
+        return U
+
+    def createPartitioning(self,name,elements,interfaces,spts):
         """Create a new partitioning with a name"""
 
         assert "mesh" in self._file,"Create shapes before interfaces"
         mesh=self._file["mesh"]
-        partitioning=mesh["partitioning"] if "partitioning" in mesh else  mesh.create_group("partitioning") 
+        partitioning=mesh["partitionings"] if "partitionings" in mesh else  mesh.create_group("partitionings") 
         assert name not in partitioning
+
         partG=partitioning.create_group(name)
-        for s in part:
-            for pi,p in enumerate(part[s]):
-                partG.create_dataset(s+"-%d"%pi,data=p)
-        partG.attrs['n-partitions']=len(list(part.values())[0])
+        elments=partG.create_group("elements")
+
+        for s in elements:
+            elments.create_dataset(s,data=elements[s])
+
+        nParts=len(set([e.split('-')[1] for e in elements]))
+        partG.attrs['n-partitions']=nParts
+        intf=partG.create_group("interfaces")
+
+        shp=partG.create_group("shapes")
+        if(nParts==1):# This is the root partition!
+            for i in interfaces:
+                assert i.endswith('-0')
+                intf[i]=self._file["mesh"]['interfaces'][i.replace('-0','')]
+
+            for s in spts:
+                shp[s]=self._file["mesh"]['shape-points'][s.replace('-0','')]
+        else:
+            for i in interfaces:
+                intf.create_dataset(i,data=interfaces[i])
+            for s in spts:
+                shp.create_dataset(s,data=spts[s])
+
+
+    
 
     def getPartitionsInPartitioning(self,partitioning):
-        return self._file["mesh"]["partitioning"][partitioning].attrs["n-partitions"]
+        return self._file["mesh"]["partitionings"][partitioning].attrs["n-partitions"]
 
+
+    def getPartitionings(self):
+        return self._file["mesh"]["partitionings"].keys()
 
     def setVolumeSolution(self,partition,name,solutionDict,**attrs):
         sols=self._file["volume-solutions"] if "volume-solutions" in self._file else  self._file.create_group("volume-solutions")
@@ -148,11 +201,12 @@ class H5FileIO(IO):
             shapeSol=sol.create_group(s)
             for ss in solutionDict[s]:
                 shapeSol.create_dataset(ss,data=solutionDict[s][ss])
-            
 
+    def getMesh(self):
+        pass
+            
     def shapes(self):
         """Return the names of the shapes"""
-
         return self._file["mesh"]["shape-points"].keys()
 
     def shapeCounts(self):
@@ -161,5 +215,7 @@ class H5FileIO(IO):
         shp=self._file["mesh"]["shape-points"]
         return {s:shp[s].shape[1] for s in shp}
     
+    def getShapePoints(self,shape):
+        return np.array(self._file["mesh"]["shape-points"][shape])
 
         

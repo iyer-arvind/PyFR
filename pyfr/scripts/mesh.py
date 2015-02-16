@@ -28,14 +28,9 @@ def process_convert(args):
     with H5FileIO(args.outmesh,"w") as F:
         F.createShapes(**shapes)
         F.createInterfaces(**interfaces)
-    #np.savez(args.outmesh, **mesh)
 
 
 def process_partition(args):
-    # Ensure outd is a directory
-    if not os.path.isdir(args.outd):
-        raise ValueError('Invalid output directory')
-
     # Partition weights
     if ':' in args.np:
         pwts = [int(w) for w in args.np.split(':')]
@@ -59,23 +54,31 @@ def process_partition(args):
             raise RuntimeError('No partitioners available')
 
     # Partition the mesh
-    mesh, part_soln_fn = part.partition(read_pyfr_data(args.mesh))
+    with H5FileIO(args.mesh,"a") as F:
+        intf,spts,pMap = part.partition(F)
+        if(not args.tag):
+            args.tag="%d-parts"%len(pwts)
+            N=0
+            while (args.tag in F.getPartitionings()):
+                args.tag="%d-parts_%d"%(len(pwts),N)
+                N+=1
+        F.createPartitioning(args.tag,pMap,intf,spts)
 
     # Prepare the solutions
-    solnit = (part_soln_fn(read_pyfr_data(s)) for s in args.solns)
+    # solnit = (part_soln_fn(read_pyfr_data(s)) for s in args.solns)
 
     # Output paths/files
-    paths = it.chain([args.mesh], args.solns)
-    files = it.chain([mesh], solnit)
+    # paths = it.chain([args.mesh], args.solns)
+    # files = it.chain([mesh], solnit)
 
     # Iterate over the output mesh/solutions
-    for path, data in zip(paths, files):
+    #for path, data in zip(paths, files):
         # Compute the output path
-        path = os.path.join(args.outd, os.path.basename(path.rstrip('/')))
+        #path = os.path.join(args.outd, os.path.basename(path.rstrip('/')))
 
         # Open and save
-        with open(path, 'wb') as f:
-            np.savez(f, **data)
+        #with open(path, 'wb') as f:
+        #    np.savez(f, **data)
 
 
 def main():
@@ -101,15 +104,16 @@ def main():
     ap_partition.add_argument('np', help='number of partitions or a colon '
                               'delimited list of weighs')
     ap_partition.add_argument('mesh', help='input mesh file')
-    ap_partition.add_argument('solns', nargs='*',
-                              help='input solution files')
-    ap_partition.add_argument(dest='outd', help='output directory')
+
     partitioners = sorted(cls.name for cls in subclasses(BasePartitioner))
     ap_partition.add_argument('-p', dest='partitioner', choices=partitioners,
                               help='partitioner to use')
     ap_partition.add_argument('--popt', dest='popts', action='append',
                               default=[], metavar='key:value',
                               help='partitioner-specific option ')
+
+    ap_partition.add_argument('--tag', dest='tag', action='store', help='name for partition')
+
     ap_partition.set_defaults(process=process_partition)
 
     args = ap.parse_args()

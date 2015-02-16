@@ -185,8 +185,9 @@ class GmshReader(BaseReader):
             # Extract the raw element data
             elei = [int(i) for i in l.split()]
             enum, etype, entags = elei[:3]
-            etags, enodes = elei[3:3 + entags], elei[3 + entags:]
 
+            etags, enodes = elei[3:3 + entags], elei[3 + entags:]
+            
             if etype not in self._etype_map:
                 raise ValueError('Unsupported element type {}'.format(etype))
 
@@ -194,7 +195,6 @@ class GmshReader(BaseReader):
             epent = etags[0]
 
             elenodes[etype, epent].append(enodes)
-
         self._elenodes = {k: np.array(v) for k, v in elenodes.items()}
 
     def _to_first_order(self, elemap):
@@ -323,7 +323,7 @@ class GmshReader(BaseReader):
                       chain.from_iterable(pfpairs.values()))
 
         # Generate the internal connectivity array
-        con = np.array(list(pairs),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
+        con = np.array(list(pairs),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]).transpose()
         # Generate boundary condition connectivity arrays
         bcon = {}
         for pbcrgn, pent in self._bfacespents.items():
@@ -334,7 +334,7 @@ class GmshReader(BaseReader):
         ret['internal']=con
 
         for k, v in bcon.items():
-            ret[k] = np.array(list(v),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
+            ret[k] = np.array(list(v),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]).transpose()
 
         return ret
 
