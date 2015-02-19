@@ -9,7 +9,7 @@ import numpy as np
 
 from pyfr.partitioners import BasePartitioner, get_partitioner_by_name
 from pyfr.readers import BaseReader, get_reader_by_name, get_reader_by_extn
-from pyfr.readers.native import read_pyfr_data
+#from pyfr.readers.native import read_pyfr_data
 from pyfr.util import subclasses
 from pyfr.io import H5FileIO
 
@@ -27,7 +27,7 @@ def process_convert(args):
     # Save to disk
     with H5FileIO(args.outmesh,"w") as F:
         F.createShapes(**shapes)
-        F.createInterfaces(**interfaces)
+        F.createInterfaces(interfaces)
 
 
 def process_partition(args):
@@ -55,14 +55,14 @@ def process_partition(args):
 
     # Partition the mesh
     with H5FileIO(args.mesh,"a") as F:
-        intf,spts,pMap = part.partition(F)
+        partitions = part.partition(F)
         if(not args.tag):
             args.tag="%d-parts"%len(pwts)
             N=0
             while (args.tag in F.getPartitionings()):
                 args.tag="%d-parts_%d"%(len(pwts),N)
                 N+=1
-        F.createPartitioning(args.tag,pMap,intf,spts)
+        F.createPartitioning(args.tag,partitions)
 
     # Prepare the solutions
     # solnit = (part_soln_fn(read_pyfr_data(s)) for s in args.solns)

@@ -4,6 +4,7 @@ from abc import ABCMeta, abstractmethod
 from collections import defaultdict, OrderedDict
 import itertools as it
 import re
+import sys
 
 from pyfr.inifile import Inifile
 from pyfr.shapes import BaseShape
@@ -50,16 +51,10 @@ class BaseSystem(object, metaclass=ABCMeta):
 
     def _load_eles(self, rallocs, mesh, initsoln, nreg):
         basismap = {b.name: b for b in subclasses(BaseShape, just_leaf=True)}
-
         # Look for and load each element type from the mesh
         elemap = OrderedDict()
-        for f in mesh:
-            m = re.match('spt_(.+?)_p%d$' % rallocs.prank, f)
-            if m:
-                # Element type
-                t = m.group(1)
-
-                elemap[t] = self.elementscls(basismap[t], mesh[f], self.cfg)
+        for s in mesh.getShapes():
+            elemap[s] = self.elementscls(basismap[s], mesh.getShapePoints(s) , self.cfg)
 
         # Construct a proxylist to simplify collective operations
         eles = proxylist(elemap.values())
@@ -83,12 +78,9 @@ class BaseSystem(object, metaclass=ABCMeta):
         return eles, elemap
 
     def _load_int_inters(self, rallocs, mesh, elemap):
-        key = 'con_p{0}'.format(rallocs.prank)
-
-        lhs, rhs = mesh[key].astype('U4,i4,i1,i1').tolist()
+        lhs, rhs = mesh.getInternalInterface().tolist()
         int_inters = self.intinterscls(self.backend, lhs, rhs, elemap,
                                        self.cfg)
-
         # Although we only have a single internal interfaces instance
         # we wrap it in a proxylist for consistency
         return proxylist([int_inters])
@@ -99,8 +91,7 @@ class BaseSystem(object, metaclass=ABCMeta):
         mpi_inters = proxylist([])
         for rhsprank in rallocs.prankconn[lhsprank]:
             rhsmrank = rallocs.pmrankmap[rhsprank]
-            interarr = mesh['con_p%dp%d' % (lhsprank, rhsprank)]
-            interarr = interarr.astype('U4,i4,i1,i1').tolist()
+            interarr = mesh.getConnectivity(rhsmrank).tolist()
 
             mpiiface = self.mpiinterscls(self.backend, interarr, rhsmrank,
                                          rallocs, elemap, self.cfg)
@@ -113,23 +104,18 @@ class BaseSystem(object, metaclass=ABCMeta):
         bcmap = {b.type: b for b in subclasses(bccls, just_leaf=True)}
 
         bc_inters = proxylist([])
-        for f in mesh:
-            m = re.match('bcon_(.+?)_p%d$' % rallocs.prank, f)
-            if m:
-                # Get the region name
-                rgn = m.group(1)
+        for b in mesh.getBoundaries():
+            # Determine the config file section
+            cfgsect = 'soln-bcs-%s' % b
 
-                # Determine the config file section
-                cfgsect = 'soln-bcs-%s' % rgn
+            # Get the interface
 
-                # Get the interface
-                interarr = mesh[f].astype('U4,i4,i1,i1').tolist()
-
-                # Instantiate
-                bcclass = bcmap[self.cfg.get(cfgsect, 'type')]
-                bciface = bcclass(self.backend, interarr, elemap, cfgsect,
-                                  self.cfg)
-                bc_inters.append(bciface)
+            interarr = mesh.getBoundary(b).tolist()
+            # Instantiate
+            bcclass = bcmap[self.cfg.get(cfgsect, 'type')]
+            bciface = bcclass(self.backend, interarr, elemap, cfgsect,
+                              self.cfg)
+            bc_inters.append(bciface)
 
         return bc_inters
 

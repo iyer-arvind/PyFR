@@ -7,7 +7,6 @@ import re
 from pyfr.mpiutil import get_comm_rank_root
 from pyfr.util import subclass_where
 
-
 def get_rank_allocation(mesh, cfg):
     name = cfg.get('backend', 'rank-allocator', 'linear')
 
@@ -24,10 +23,23 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
 
         if rank == root:
             # Determine the (physical) connectivity of the mesh
-            prankconn = self._get_mesh_connectivity(mesh)
+            conn=mesh.getConnectivities()
+            nParts=len(conn)
+
+            conn=list(zip(range(len(conn)),conn))
+
+            mapList=map(lambda x:list(map(lambda j:(j,x[0]),x[1])),conn)
+            flatMapList=[item for sublist in mapList for item in sublist]
+
+            assert (sorted([ (j[1],j[0]) for j in flatMapList],key=lambda x:x[0]) 
+                == (sorted([ (j[0],j[1]) for j in flatMapList],key=lambda x:x[0]))
+                )
+
+            prankconn = dict(conn)
+
             nparts = len(prankconn) or 1
 
-            if nparts != comm.size:
+            if nParts != comm.size:
                 raise RuntimeError('Mesh has %d partitions but running with '
                                    '%d MPI ranks' % (nparts, comm.size))
         else:
@@ -47,6 +59,7 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
         self.prankconn = comm.bcast(prankconn, root=root)
         self.mprankmap = comm.bcast(mprankmap, root=root)
 
+
         # Invert this mapping
         self.pmrankmap = {v: k for k, v in self.mprankmap.items()}
 
@@ -55,7 +68,8 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
 
     def _get_mesh_connectivity(self, mesh):
         conn = defaultdict(list)
-        for f in mesh:
+        for f in mesh.getConnectivities():
+            print (f)
             m = re.match(r'con_p(\d+)p(\d+)$', f)
             if m:
                 lhs, rhs = int(m.group(1)), int(m.group(2))
@@ -87,3 +101,4 @@ class LinearRankAllocator(BaseRankAllocator):
 
     def _get_mprankmap(self, prankconn, rinfo):
         return {i: i for i in range(len(rinfo))}
+

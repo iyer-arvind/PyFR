@@ -98,7 +98,8 @@ class BasePartitioner(object):
 
     def _construct_graph(self, mesh):
         # Edges of the dual graph
-        con = mesh.getInterface('internal')
+        con = mesh.getInternalInterface()
+
         con = np.hstack([con, con[::-1]])
         # Sort by the left hand side
         idx = np.lexsort([con['type'][0], con['ele'][0]])
@@ -127,49 +128,13 @@ class BasePartitioner(object):
     def _partition_graph(self, graph, partwts):
         pass
 
-    def _partition_spts(self, mesh, vparts, vetimap):
-        # Get the shape point arrays from the mesh
-        spt_p0 = {}
-        for s in mesh.shapes():
-            spt_p0[s] = mesh.getShapePoints(s)
+    def _construct_partitions(self, mesh, vparts, vetimap):
+        nParts=len(set(vparts))
+        partitions=[{k:defaultdict(list) for k in ("shape-points","interfaces","elements")} for i in range(nParts)]
 
-        # Partition the shape points
-        spt_px = defaultdict(list)
-
-        for (etype, eidxg), part in zip(vetimap, vparts):
-            spt_px[etype, part].append(spt_p0[etype][:,eidxg,:])
-
-        # Stack
-        return {'{0}-{1}'.format(*k): np.array(v).swapaxes(0, 1) for k, v in spt_px.items()}
-
-    def _partition_map(self,vparts, vetimap):
-
-        pMap=defaultdict(list)
-        for (etype, eidxg), part in zip(vetimap, vparts):
-            pMap["{0}-{1}".format(etype,part)].append(eidxg)
-
-        return pMap
-
-    #def _partition_soln(self, soln, vparts, vetimap):
-    #    # Get the solution arrays from the file
-    #    soln_p0 = {}
-    #    for f in soln:
-    #        if f.startswith('soln'):
-    #            soln_p0[f.split('_')[1]] = soln[f]
-
-    #    # Partition the solutions
-    #    soln_px = defaultdict(list)
-    #    for (etype, eidxg), part in zip(vetimap, vparts):
-    #        soln_px[etype, part].append(soln_p0[etype][...,eidxg])
-
-    #    # Stack
-    #    return {'soln_{0}_p{1}'.format(*k): np.dstack(v)
-    #            for k, v in soln_px.items()}
-
-    def _partition_con(self, mesh, vparts, vetimap):
-        con_px = defaultdict(list)
-        con_pxpy = defaultdict(list)
-        bcon_px = defaultdict(list)
+        #con_px = defaultdict(list)
+        #con_pxpy = defaultdict(list)
+        #bcon_px = defaultdict(list)
 
         # Global-to-local element index map
         eleglmap = defaultdict(list)
@@ -180,7 +145,7 @@ class BasePartitioner(object):
             pcounter[etype, part] += 1
 
         # Generate the face connectivity
-        con = mesh.getInterface('internal')
+        con = mesh.getInternalInterface()
         for l, r in zip(*con):
             letype, leidxg, lfidx, lflags = l
             retype, reidxg, rfidx, rflags = r
@@ -192,33 +157,32 @@ class BasePartitioner(object):
             conr = (retype, reidxl, rfidx, rflags)
 
             if lpart == rpart:
-                con_px[lpart].append([conl, conr])
+                partitions[lpart]["interfaces"][lpart].append([conl, conr])
             else:
-                con_pxpy[lpart, rpart].append(conl)
-                con_pxpy[rpart, lpart].append(conr)
+                partitions[lpart]["interfaces"][rpart].append(conl)
+                partitions[rpart]["interfaces"][lpart].append(conr)
 
         # Generate boundary conditions
-        bcons=[b for b in mesh.getInterfaces() if b != "internal"]
-        for b in bcons:
-            for lpetype, leidxg, lfidx, lflags in mesh.getInterface(b):
+        for b in mesh.getBoundaries():
+            for lpetype, leidxg, lfidx, lflags in mesh.getBoundary(b):
                 lpart, leidxl = eleglmap[lpetype][leidxg]
                 conl = (lpetype, leidxl, lfidx, lflags)
+                partitions[lpart]["interfaces"][b].append(conl)
 
-                bcon_px[b, lpart].append(conl)
 
-        # Output
-        ret = {}
+        spt_p0 = {}
+        for s in mesh.getShapes():
+            spt_p0[s] = mesh.getShapePoints(s)
 
-        for k, v in con_px.items():
-            ret["internal-{0}".format(k)] = np.array(v, dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]).T
 
-        for k, v in con_pxpy.items():
-            ret["conn-{0}-{1}".format(k[0],k[1])] = np.array(v, dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
+        for (etype, eidxg), part in zip(vetimap, vparts):
+            partitions[part]["shape-points"][etype].append(spt_p0[etype][:,eidxg,:])
 
-        for k, v in bcon_px.items():
-            ret["{0}-{1}".format(k[0],k[1])] =np.array(v, dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')])
-
-        return ret
+        # Generate the element list
+        elements=defaultdict(list)
+        for (etype, eidxg), part in zip(vetimap, vparts):
+            partitions[part]["elements"][etype].append(eidxg)
+        return partitions
 
     def partition(self, mesh):
         # Perform the partitioning
@@ -230,16 +194,7 @@ class BasePartitioner(object):
             vparts = self._partition_graph(graph, self.partwts)
 
             # Partition the connectivity portion of the mesh
-            interfaces = self._partition_con(mesh, vparts, vetimap)
+            return self._construct_partitions(mesh, vparts, vetimap)
 
-            # Handle the shape points
-            spts = self._partition_spts(mesh, vparts, vetimap)
-
-            # Get the partition map
-            pMap = self._partition_map(vparts, vetimap)
-        # Short circuit
         else:
             raise NotImplementedError
-            newmesh = mesh
-        print (pMap)
-        return interfaces,spts,pMap

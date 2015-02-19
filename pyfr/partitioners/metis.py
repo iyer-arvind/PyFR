@@ -30,12 +30,12 @@ class METISWrappers(object):
     METIS_OPTION_CTYPE = 2
     METIS_OPTION_IPTYPE = 3
     METIS_OPTION_RTYPE = 4
-    METIS_OPTION_NITER = 6
+    METIS_OPTION_NITER = 1
     METIS_OPTION_NCUTS = 7
     METIS_OPTION_NSEPS = 15
     METIS_OPTION_UFACTOR = 16
     METIS_OPTION_MINCONN = 9
-
+    METIS_OPTION_SEED = 1 
     def __init__(self):
         lib = load_library('metis')
 

@@ -331,7 +331,7 @@ class GmshReader(BaseReader):
 
         # Output
         ret={}
-        ret['internal']=con
+        ret[0]=con
 
         for k, v in bcon.items():
             ret[k] = np.array(list(v),dtype=[('type', 'S4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]).transpose()
