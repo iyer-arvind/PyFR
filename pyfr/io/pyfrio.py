@@ -207,6 +207,8 @@ class H5Partitioning(IO.Partitioning):
                     ds=shp.create_dataset(name,(nspts,nfull))
                     ds[:,offset:offset+neles]=solns[s][:,i,:]
 
+            self.io._file.flush()
+
         def __getInterface(self,key):
             T=np.array(self.group['interfaces'][key])
             dtype=[('type', 'U4'), ('ele', '<i4'), ('face', 'i1'),('zone', 'i1')]
