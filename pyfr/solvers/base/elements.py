@@ -10,6 +10,7 @@ from pyfr.util import memoize
 
 class BaseElements(object, metaclass=ABCMeta):
     _privarmap = None
+    _convarmap = None
 
     def __init__(self, basiscls, eles, cfg):
         self._be = None
@@ -20,6 +21,8 @@ class BaseElements(object, metaclass=ABCMeta):
         self.nspts = nspts = eles.shape[0]
         self.neles = neles = eles.shape[1]
         self.ndims = ndims = eles.shape[2]
+
+        self.convars = self._convarmap[ndims]
 
         # Kernels we provide
         self.kernels = {}

@@ -4,7 +4,7 @@ import re
 
 from pyfr.integrators.controllers import BaseController
 from pyfr.integrators.steppers import BaseStepper
-from pyfr.integrators.writers import BaseWriter
+#from pyfr.integrators.writers import BaseWriter
 from pyfr.util import subclass_where
 
 
@@ -16,14 +16,14 @@ def get_integrator(backend, systemcls, rallocs, mesh, initsoln, cfg):
 
     controller = subclass_where(BaseController, controller_name=c)
     stepper = subclass_where(BaseStepper, stepper_name=s)
-    writer = subclass_where(BaseWriter, writer_name=w)
+    #writer = subclass_where(BaseWriter, writer_name=w)
 
     # Determine the integrator name
     name = '_'.join([c, s, w])
     name = re.sub('(?:^|_|-)([a-z])', lambda m: m.group(1).upper(), name)
 
     # Composite the classes together to form a new type
-    integrator = type(name, (controller, stepper, writer), dict(name=name))
+    integrator = type(name, (controller, stepper), dict(name=name))
 
     # Construct and return an instance of this new integrator class
     return integrator(backend, systemcls, rallocs, mesh, initsoln, cfg)

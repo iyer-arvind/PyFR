@@ -16,6 +16,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         self.rallocs = rallocs
         self.cfg = cfg
 
+        self.runid=self.rallocs.runid
+
         # Sanity checks
         if self._controller_needs_errest and not self._stepper_has_errest:
             raise TypeError('Incompatible stepper/controller combination')
@@ -49,6 +51,7 @@ class BaseIntegrator(object, metaclass=ABCMeta):
 
         # Extract the UUID of the mesh (to be saved with solutions)
         #self._mesh_uuid = mesh['mesh_uuid']
+        self.mesh=mesh
 
         # Get a queue for subclasses to use
         self._queue = backend.queue()
@@ -58,6 +61,9 @@ class BaseIntegrator(object, metaclass=ABCMeta):
 
         # Sum to get the global number over all partitions
         self._gndofs = MPI.COMM_WORLD.allreduce(ndofs, op=MPI.SUM)
+
+        self.nouts=0
+
 
     def _kernel(self, name, nargs):
         # Transpose from [nregs][neletypes] to [neletypes][nregs]
@@ -82,9 +88,10 @@ class BaseIntegrator(object, metaclass=ABCMeta):
     def advance_to(self, t):
         pass
 
-    @abstractmethod
     def output(self, solns, stats):
-        pass
+        stats["nouts"] = self.nouts
+        self.nouts += 1
+        self.mesh.writeSolution(self,solns,stats)
 
     @abstractproperty
     def _controller_needs_errest(self):
@@ -115,11 +122,11 @@ class BaseIntegrator(object, metaclass=ABCMeta):
             solnmap = OrderedDict(zip(self._system.ele_types, solns))
 
             # Collect statistics
-            stats = Inifile()
+            stats = {}
             self.collect_stats(stats)
 
             # Output
             self.output(solnmap, stats)
 
     def collect_stats(self, stats):
-        stats.set('solver-time-integrator', 'tcurr', self.tcurr)
+        stats['tcurr']=self.tcurr

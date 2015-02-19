@@ -123,12 +123,17 @@ class IO(object,metaclass = ABCMeta):
             def getInternalInterface(self):
                 pass
 
+            @abstractmethod
+            def writeSolution(self,solns,stats):
+                pass
+
         
     
         
-
+from pyfr.mpiutil import get_comm_rank_root
 import h5py
 class H5Partitioning(IO.Partitioning):
+
     def __init__(self,name,io):
         self.group=io._file["mesh"]["partitionings"][name]
         super(self.__class__,self).__init__(name,io)
@@ -170,6 +175,37 @@ class H5Partitioning(IO.Partitioning):
         def getInternalInterface(self):
             return self.__getInterface("internal")
 
+        def writeSolution(self,intg,solns,stats):
+            comm, rank, root = get_comm_rank_root()
+
+            sol=self.io.createNewVolumeSolution(self,intg.runid.hex[0:8]+"-%08d"%stats['nouts'])
+            shapes=intg.rallocs.prank,{(s):solns[s].shape for s in solns}
+
+            shapesList = comm.gather(shapes, root=0)
+            if rank == root :
+                print (shapesList)
+                shapes = set([ d for pr,sd in shapesList for d in sd.keys() ])
+                offsets={}
+                for s in shapes:
+                    dataShapes=([ sd[s] for pr,sd in sorted(shapesList,key=lambda x:x[0])])
+                    offsets[s]=np.cumsum((0,)+tuple([d[-1] for d in dataShapes]))
+            else:
+                offsets = None
+            offsets=comm.bcast(offsets)
+            
+            convarmap = {4: ['rho', 'rhou', 'rhov', 'E'],
+                         5: ['rho', 'rhou', 'rhov', 'rhow', 'E']}
+            for s in offsets:
+                offset = offsets[s][intg.rallocs.prank]
+                nfull  = offsets[s][-1]
+                nspts  = solns[s].shape[0]
+                nitems = solns[s].shape[1]
+                neles  = solns[s].shape[2]
+                shp = sol.create_group(s)
+                convNames = convarmap[nitems]
+                for i,name in enumerate(convNames):
+                    ds=shp.create_dataset(name,(nspts,nfull))
+                    ds[:,offset:offset+neles]=solns[s][:,i,:]
 
         def __getInterface(self,key):
             T=np.array(self.group['interfaces'][key])
@@ -302,6 +338,13 @@ class H5FileIO(IO,H5Partitioning.Partition):
             shapeSol=sol.create_group(s)
             for ss in solutionDict[s]:
                 shapeSol.create_dataset(ss,data=solutionDict[s][ss])
+
+    def createNewVolumeSolution(self,partition,runid):
+        vol_solution=self._file["volume-solutions"] if "volume-solutions" in self._file else self._file.create_group('volume-solutions')
+        sol = vol_solution.create_group("volume-solution-%s"%runid)
+        sol["_partitioning"]=self._file["mesh"]["partitionings"][partition.partitioning.name]
+        print ("Creating solution group: ","volume-solution-%s"%runid)
+        return sol
 
 
 

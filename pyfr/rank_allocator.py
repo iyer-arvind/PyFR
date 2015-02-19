@@ -3,7 +3,7 @@
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 import re
-
+import uuid
 from pyfr.mpiutil import get_comm_rank_root
 from pyfr.util import subclass_where
 
@@ -59,12 +59,19 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
         self.prankconn = comm.bcast(prankconn, root=root)
         self.mprankmap = comm.bcast(mprankmap, root=root)
 
-
         # Invert this mapping
         self.pmrankmap = {v: k for k, v in self.mprankmap.items()}
 
         # Compute the physical rank of ourself
         self.prank = self.mprankmap[rank]
+
+        if rank == root:
+            runid = uuid.uuid4()
+        else:
+            runid=None
+
+        self.runid = comm.bcast(runid, root=root)
+        
 
     def _get_mesh_connectivity(self, mesh):
         conn = defaultdict(list)

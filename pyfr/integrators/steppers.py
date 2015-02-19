@@ -25,8 +25,8 @@ class BaseStepper(BaseIntegrator):
     def collect_stats(self, stats):
         super().collect_stats(stats)
 
-        stats.set('solver-time-integrator', 'nsteps', self.nsteps)
-        stats.set('solver-time-integrator', 'nfevals', self._stepper_nfevals)
+        stats['nsteps'] = self.nsteps
+        stats['nfevals'] = self._stepper_nfevals
 
     @memoize
     def _get_axnpby_kerns(self, n):
