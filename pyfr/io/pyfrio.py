@@ -132,6 +132,7 @@ class IO(object,metaclass = ABCMeta):
         
 from pyfr.mpiutil import get_comm_rank_root
 import h5py
+import sys
 class H5Partitioning(IO.Partitioning):
 
     def __init__(self,name,io):
@@ -143,6 +144,7 @@ class H5Partitioning(IO.Partitioning):
 
     class Partition(IO.Partitioning.Partition):
         def __init__(self,partitioning,number):
+            self.comm,self.rank,self.root=get_comm_rank_root()
             super(H5Partitioning.Partition,self).__init__(partitioning,number)
             self.group=self.partitioning.group["partition-%d"%number]
 
@@ -176,13 +178,11 @@ class H5Partitioning(IO.Partitioning):
             return self.__getInterface("internal")
 
         def writeSolution(self,intg,solns,stats):
-            comm, rank, root = get_comm_rank_root()
-
             sol=self.io.createNewVolumeSolution(self,intg.runid.hex[0:8]+"-%08d"%stats['nouts'])
             shapes=intg.rallocs.prank,{(s):solns[s].shape for s in solns}
 
-            shapesList = comm.gather(shapes, root=0)
-            if rank == root :
+            shapesList = self.comm.gather(shapes, root=0)
+            if self.rank == self.root :
                 print (shapesList)
                 shapes = set([ d for pr,sd in shapesList for d in sd.keys() ])
                 offsets={}
@@ -191,23 +191,25 @@ class H5Partitioning(IO.Partitioning):
                     offsets[s]=np.cumsum((0,)+tuple([d[-1] for d in dataShapes]))
             else:
                 offsets = None
-            offsets=comm.bcast(offsets)
+            offsets=self.comm.bcast(offsets)
             
             convarmap = {4: ['rho', 'rhou', 'rhov', 'E'],
                          5: ['rho', 'rhou', 'rhov', 'rhow', 'E']}
+
             for s in offsets:
                 offset = offsets[s][intg.rallocs.prank]
-                nfull  = offsets[s][-1]
-                nspts  = solns[s].shape[0]
-                nitems = solns[s].shape[1]
-                neles  = solns[s].shape[2]
+                nfull  = int(offsets[s][-1])
+                nspts  = int(solns[s].shape[0])
+                nitems = int(solns[s].shape[1])
+                neles  = int(solns[s].shape[2])
                 shp = sol.create_group(s)
                 convNames = convarmap[nitems]
                 for i,name in enumerate(convNames):
+                    print (i,name,nspts,nfull)
                     ds=shp.create_dataset(name,(nspts,nfull))
                     ds[:,offset:offset+neles]=solns[s][:,i,:]
+                    del ds
 
-            self.io._file.flush()
 
         def __getInterface(self,key):
             T=np.array(self.group['interfaces'][key])
@@ -222,6 +224,7 @@ class H5FileIO(IO,H5Partitioning.Partition):
     Partitioning = H5Partitioning
 
     def __init__(self,fileName,mode='r'):
+        self.comm,self.rank,self.root=get_comm_rank_root()
         IO.__init__(self,fileName,mode)
         if(
                 ("mesh" in self._file) and 
@@ -235,7 +238,8 @@ class H5FileIO(IO,H5Partitioning.Partition):
         H5Partitioning.Partition.__init__(self,self.__root,0)
 
     def openFile(self,fileName,mode='r'):
-        self._file=h5py.File(fileName,mode)
+        self._file=h5py.File(fileName,mode,driver='mpio',comm=self.comm)
+        self._file.atomic=True
 
     def closeFile(self):
         self._file.close()
