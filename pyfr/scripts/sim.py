@@ -22,21 +22,21 @@ def process_run(args):
     return read_pyfr_data(args.mesh), None, Inifile.load(args.cfg)
 
 
-def process_restart(args):
-    mesh = read_pyfr_data(args.mesh)
-    soln = read_pyfr_data(args.soln)
-
-    # Ensure the solution is from the mesh we are using
-    if soln['mesh_uuid'] != mesh['mesh_uuid']:
-        raise RuntimeError('Invalid solution for mesh.')
-
-    # Process the config file
-    if args.cfg:
-        cfg = Inifile.load(args.cfg)
-    else:
-        cfg = Inifile(soln['config'].item().decode())
-
-    return mesh, soln, cfg
+#def process_restart(args):
+#    mesh = read_pyfr_data(args.mesh)
+#    soln = read_pyfr_data(args.soln)
+#
+#    # Ensure the solution is from the mesh we are using
+#    if soln['mesh_uuid'] != mesh['mesh_uuid']:
+#        raise RuntimeError('Invalid solution for mesh.')
+#
+#    # Process the config file
+#    if args.cfg:
+#        cfg = Inifile.load(args.cfg)
+#    else:
+#        cfg = Inifile(soln['config'].item().decode())
+#
+#    return mesh, soln, cfg
 
 
 @mp.workdps(60)
@@ -57,17 +57,18 @@ def main():
     ap_run.add_argument('partitioning', type=str, help='partitioning name')
     ap_run.set_defaults(process=process_run)
 
-    ap_restart = sp.add_parser('restart', help='restart --help')
-    ap_restart.add_argument('mesh', help='mesh file')
-    ap_restart.add_argument('soln', help='solution file')
-    ap_restart.add_argument('cfg', nargs='?', type=FileType('r'),
-                            help='new config file')
-    ap_restart.set_defaults(process=process_restart)
+    #ap_restart = sp.add_parser('restart', help='restart --help')
+    #ap_restart.add_argument('mesh', help='mesh file')
+    #ap_restart.add_argument('soln', help='solution file')
+    #ap_restart.add_argument('cfg', nargs='?', type=FileType('r'),
+    #                        help='new config file')
+    #ap_restart.set_defaults(process=process_restart)
 
     # Parse the arguments
     args = ap.parse_args()
 
     F=H5FileIO(args.mesh,"a")
+
     cfg = Inifile.load(args.cfg)
     partitioning = F.getPartitioning(args.partitioning)
 

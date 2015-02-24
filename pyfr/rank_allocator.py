@@ -70,7 +70,7 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
         else:
             runid=None
 
-        self.runid = comm.bcast(runid, root=root)
+        self.runid = comm.bcast(runid, root=root).hex[0:10]
         
 
     def _get_mesh_connectivity(self, mesh):

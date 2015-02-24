@@ -1,0 +1,252 @@
+#!/usr/bin/env python
+
+import errno
+from stat import S_IFDIR, S_IFLNK, S_IFREG
+from sys import argv, exit
+from time import time
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
+
+import os
+from io import BytesIO
+from pyfr.io import H5FileIO
+from itertools import count
+import re
+import numpy as np
+
+import sys, traceback
+from pyfr.writers import paraview
+
+now=time()
+
+DD=dict(st_mode=S_IFDIR|0o755,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
+RF=dict(st_mode=S_IFREG|0o400,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
+WF=dict(st_mode=S_IFREG|0o600,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
+
+
+def register(f):
+    def ff(*args,**kwargs):
+        print ("--> \033[32m",f.__name__,args,kwargs,"\033[0m")
+        try:
+            ret=f(*args,**kwargs)
+        except FuseOSError as e:
+            print ("-x- \033[31m",f.__name__,e,"\033[0m")
+            raise e
+        except Exception as e:
+            traceback.print_exc(file=sys.stdout)
+            raise e
+        print ("<-- \033[33m",f.__name__,ret,"\033[0m")
+        return ret
+    return ff
+
+
+
+        
+
+
+class PyFRFuse(LoggingMixIn, Operations):
+
+    def __init__(self,inf):
+        self._file=H5FileIO(inf)
+
+        self.__dirs={}
+        self.__files={}
+        self.__fidPathMap={}
+        self.__dataCache={}
+        self.__fid=count(5)
+
+        now = time()
+        self.__dirs['/']=DD
+        self.__update_mesh()
+        self.__update_solutions()
+
+    def __update_mesh(self):
+        self.__dirs['/mesh']=DD
+
+    
+    def __update_solutions(self):
+        self.__dirs['/volume-solutions']=DD
+        for s in self._file.getSolutions():
+            self.__dirs['/volume-solutions/'+s]=DD
+            for sh in self._file.getShapes():
+                self.__files['/volume-solutions/'+s+"/"+sh+".a_msh"]=RF
+                self.__files['/volume-solutions/'+s+"/"+sh+".a_sol"]=RF
+            self.__files['/volume-solutions/'+s+".vtu"]=RF
+    
+    def __fetchFile(self,path):
+        if(path in self.__dataCache):
+            return self.__dataCache[path]
+
+        data_re=re.compile('/volume-solutions/(?P<S>volume-solution-[a-z0-9]*-[0-9]*)/(?P<H>[a-z0-9]*).(?P<E>[a-z_]*)')
+        vtu_re=re.compile('/volume-solutions/(?P<S>volume-solution-[a-z0-9]*-[0-9]*).vtu')
+        M=data_re.match(path)
+        if(M):
+            D=M.groupdict()
+            data=self._file.getSolution(D['S']).getValue()[D['H']]
+            if(D['E']=='a_msh'):
+                msh=data[0]
+                fh=BytesIO()
+                for i in range(msh.shape[1]):
+                    np.savetxt(fh,msh[:,i,:],newline=',')
+                    fh.write(b'\n')
+                self.__dataCache[path]=fh
+            elif(D['E']=='a_sol'):
+                sol=data[1]
+                fh=BytesIO()
+                for i in range(sol.shape[2]):
+                    np.savetxt(fh,sol[:,:,i],newline=',')
+                    fh.write(b'\n')
+                self.__dataCache[path]=fh
+
+            return fh
+        M=vtu_re.match(path)
+        if(M):
+            D=M.groupdict()
+            sol=self._file.getSolution(D['S'])
+            fh=BytesIO()
+            writer=paraview.ParaviewWriter(solution=sol, divisor=0, outf=fh,precision='double')
+            writer.write_out()
+            self.__dataCache[path]=fh
+            return fh
+        
+        return None
+
+
+
+
+    def destroy(self,f):
+        self._file.closeFile()
+
+
+    # Filesystem methods
+    # ==================
+
+    @register
+    def access(self, path, mode):
+        if(path in self.__dirs):
+            return
+        if(path in self.__files):
+            return
+
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def chmod(self, path, mode):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def chown(self, path, uid, gid):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def getattr(self, path, fh=None):
+        if(path in self.__dirs):
+            return self.__dirs[path]
+        if(path in self.__files):
+            fh=self.__fetchFile(path)
+            if(fh):
+                fh.seek(0, os.SEEK_END)
+                self.__files[path].update({'st_size':fh.tell()})
+            return self.__files[path]
+
+        raise FuseOSError(errno.ENOENT)
+
+    @register
+    def readdir(self, path, fh):
+        dList={os.path.relpath(d,path):self.__dirs[d] for d in self.__dirs if (d.startswith(path) and d!=path and ('/' not in d[len(path)+1:]) )}
+        fList={os.path.relpath(f,path):self.__files[f] for f in self.__files if f.startswith(path+"/") and ('/' not in f[len(path)+1:]) }
+        dList.update(fList)
+        return dList
+
+    @register
+    def readlink(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def mknod(self, path, mode, dev):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def rmdir(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def mkdir(self, path, mode):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def statfs(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def unlink(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def symlink(self, name, target):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def rename(self, old, new):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def link(self, target, name):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def utimens(self, path, times=None):
+        raise FuseOSError(errno.EACCES)
+
+    # File methods
+    # ============
+
+    @register
+    def open(self, path, flags):
+        if(path in self.__files):
+            fid=next(self.__fid)
+            self.__fidPathMap[fid]=path
+            return fid
+
+        raise FuseOSError(errno.NOENT)
+
+    @register
+    def create(self, path, mode, fi=None):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def read(self, path, length, offset, fh):
+        if(path in self.__dataCache or fh in self.__fidPathMap):
+            if(path not in self.__dataCache):
+                path=self.__fidPathMap[fh]
+            self.__dataCache[path].seek(offset)
+            return self.__dataCache[path].read(length)
+        raise FuseOSError(errno.ENOENT)
+
+    @register
+    def write(self, path, buf, offset, fh):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def truncate(self, path, length, fh=None):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def flush(self, path, fh):
+        pass
+        #raise FuseOSError(errno.EACCES)
+
+    @register
+    def release(self, path, fh):
+        pass
+        #raise FuseOSError(errno.EACCES)
+
+    @register
+    def fsync(self, path, fdatasync, fh):
+        raise FuseOSError(errno.EACCES)
+
+
+if __name__ == '__main__':
+    if len(argv) != 3:
+        print('usage: %s <pyfr-file> <mountpoint>' % argv[0])
+        exit(1)
+    fuse = FUSE(PyFRFuse(argv[1]), argv[2], foreground=True, ro=True)

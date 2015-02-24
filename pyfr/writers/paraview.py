@@ -33,8 +33,8 @@ class ParaviewWriter(BaseWriter):
         the file describe the structure of this data.
         """
         # Set default divisor to solution order
-        if self.args.divisor == 0:
-            self.args.divisor = self.cfg.getint('solver', 'order')
+        if self.divisor == 0:
+            self.divisor = self.cfg.getint('solver', 'order')
 
         write_s = lambda s: self.outf.write(s.encode('utf-8'))
 
@@ -46,20 +46,21 @@ class ParaviewWriter(BaseWriter):
         # Initialise offset (in bytes) to end of appended data
         off = 0
 
-        # Write data description header.  A vtk "piece" is used for each
-        # element in a partition.
-        for mk, sk in zip(self.mesh_inf, self.soln_inf):
-            off += _write_vtu_header(self.args, self.outf, self.mesh_inf[mk],
-                                     self.soln_inf[sk], off)
+        compositeSolution=self.soln.getValue()
+        for shp in compositeSolution:
+            msh,sol=compositeSolution[shp]
+            print (msh.shape,sol.shape)
+            off+=_write_vtu_header(self,self.outf,(shp,msh.shape),off)
 
         # Write end/start of header/data sections
         write_s('</UnstructuredGrid>\n<AppendedData encoding="raw">\n_')
 
         # Write data "piece"wise
-        for mk, sk in zip(self.mesh_inf, self.soln_inf):
-            _write_vtu_data(self.args, self.outf, self.cfg, self.mesh[mk],
-                            self.mesh_inf[mk], self.soln[sk],
-                            self.soln_inf[sk])
+        for shp in compositeSolution:
+            msh,sol=compositeSolution[shp]
+            _write_vtu_data(self,self.outf, self.cfg, 
+                            msh,(shp,msh.shape),
+                            sol,(sol,sol.shape))
 
         # Write .vtu file footer
         write_s('\n</AppendedData>\n</VTKFile>')
@@ -67,9 +68,10 @@ class ParaviewWriter(BaseWriter):
 
 def _write_vtk_darray(array, vtuf, numtyp):
     array = array.astype(numtyp)
-
-    np.uint32(array.nbytes).tofile(vtuf)
-    array.tofile(vtuf)
+    #np.uint32(array.nbytes).tofile(vtuf)
+    #array.tofile(vtuf)
+    vtuf.write(np.uint32(array.nbytes).tostring())
+    vtuf.write(array.tostring())
 
 
 class BaseShapeSubDiv(object):
@@ -283,9 +285,9 @@ class PyrShapeSubDiv(BaseShapeSubDiv):
         return np.hstack(np.column_stack(l).flat for l in lcon)
 
 
-def _write_vtu_header(args, vtuf, m_inf, s_inf, off):
+def _write_vtu_header(self,vtuf, m_inf, off):
     # Set vtk name for float, set size in bytes
-    if args.precision == 'single':
+    if self.precision == 'single':
         flt = ['Float32', 4]
     else:
         flt = ['Float64', 8]
@@ -296,10 +298,10 @@ def _write_vtu_header(args, vtuf, m_inf, s_inf, off):
     shapecls = subclass_where(BaseShape, name=m_inf[0])
     subdvcls = subclass_where(BaseShapeSubDiv, name=m_inf[0])
 
-    npts = shapecls.nspts_from_order(args.divisor + 1)*m_inf[1][1]
+    npts = shapecls.nspts_from_order(self.divisor + 1)*m_inf[1][1]
 
-    cells = subdvcls.subcells(args.divisor)
-    nodes = subdvcls.subnodes(args.divisor)
+    cells = subdvcls.subcells(self.divisor)
+    nodes = subdvcls.subnodes(self.divisor)
 
     ncells = len(cells)*m_inf[1][1]
     nnodes = len(nodes)*m_inf[1][1]
@@ -340,8 +342,8 @@ def _write_vtu_header(args, vtuf, m_inf, s_inf, off):
     return sum(offs) + 4*len(nams)
 
 
-def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
-    dtype = 'float32' if args.precision == 'single' else 'float64'
+def _write_vtu_data(self,vtuf, cfg, mesh, m_inf, soln, s_inf):
+    dtype = 'float32' if self.precision == 'single' else 'float64'
 
     # Get the shape and sub division classes
     shapecls = subclass_where(BaseShape, name=m_inf[0])
@@ -351,7 +353,7 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     syscls = subclass_where(BaseSystem, name=cfg.get('solver', 'system'))
 
     nspts, neles, ndims = m_inf[1]
-    nvpts = shapecls.nspts_from_order(args.divisor + 1)
+    nvpts = shapecls.nspts_from_order(self.divisor + 1)
 
     # Generate basis objects for solution and vtu output
     soln_b = shapecls(nspts, cfg)
@@ -360,6 +362,7 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     # Generate operator matrices to move points and solutions to vtu nodes
     mesh_vtu_op = soln_b.sbasis.nodal_basis_at(vtu_b.spts)
     soln_vtu_op = soln_b.ubasis.nodal_basis_at(vtu_b.spts)
+
 
     # Calculate node locations of vtu elements
     pts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
@@ -377,8 +380,8 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     _write_vtk_darray(pts.swapaxes(0, 1), vtuf, dtype)
 
     # Perform the sub division
-    cells = subdvcls.subcells(args.divisor)
-    nodes = subdvcls.subnodes(args.divisor)
+    cells = subdvcls.subcells(self.divisor)
+    nodes = subdvcls.subnodes(self.divisor)
 
     # Prepare vtu cell arrays (connectivity, offsets, types):
     # Generate and extend vtu sub-cell node connectivity across all elements
@@ -386,11 +389,11 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     vtu_con += (np.arange(neles)*nvpts)[:, None]
 
     # Generate offset into the connectivity array for the end of each element
-    vtu_off = np.tile(subdvcls.subcelloffs(args.divisor), (neles, 1))
+    vtu_off = np.tile(subdvcls.subcelloffs(self.divisor), (neles, 1))
     vtu_off += (np.arange(neles)*len(nodes))[:, None]
 
     # Tile vtu cell type numbers
-    vtu_typ = np.tile(subdvcls.subcelltypes(args.divisor), neles)
+    vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
 
     # Write vtu node connectivity, connectivity offsets and cell types
     _write_vtk_darray(vtu_con, vtuf, 'int32')

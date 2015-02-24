@@ -49,8 +49,6 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         # Construct the relevant mesh partition
         self._system = systemcls(backend, rallocs, mesh, initsoln, nreg, cfg)
 
-        # Extract the UUID of the mesh (to be saved with solutions)
-        #self._mesh_uuid = mesh['mesh_uuid']
         self.mesh=mesh
 
         # Get a queue for subclasses to use
@@ -64,6 +62,7 @@ class BaseIntegrator(object, metaclass=ABCMeta):
 
         self.nouts=0
 
+        mesh.writeConfig(self.runid,cfg)
 
     def _kernel(self, name, nargs):
         # Transpose from [nregs][neletypes] to [neletypes][nregs]

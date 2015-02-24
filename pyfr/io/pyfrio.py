@@ -36,6 +36,10 @@ class IO(object,metaclass = ABCMeta):
     def createPartitioning(self,name,partitions):
         pass
 
+    @abstractmethod    
+    def writeConfig(self,runid,cfg):
+        pass
+
     @abstractmethod
     def setVolumeSolution(self,partition,name,solutionDict,**attrs):
         pass
@@ -57,12 +61,21 @@ class IO(object,metaclass = ABCMeta):
 
     @abstractmethod
     def getPartitionings(self):
-        return self.Partitioning(name,self)
+        pass
+
+    def getSolution(self,solutionName):
+        return self.Solution(solutionName,self)
+
+    @abstractmethod
+    def getSolutions(self):
+        pass
+
 
     def __enter__(self):
         return self
 
     def __exit__(self,type,value,traceback):
+        print ("exit")
         self.closeFile()
         return False
 
@@ -123,9 +136,28 @@ class IO(object,metaclass = ABCMeta):
             def getInternalInterface(self):
                 pass
 
+            def writeConfig(self,runid,cfg):
+                self.io.writeConfig(runid,cfg)
+
             @abstractmethod
             def writeSolution(self,solns,stats):
                 pass
+
+    class Solution(object,metaclass=ABCMeta):
+        def __init__(self,name,io):
+            self.name = name
+            self.iop = io
+
+        @abstractmethod
+        def getConfig(self):
+            pass
+
+
+        @abstractmethod
+        def getValue(self):
+            pass
+
+
 
         
     
@@ -141,6 +173,13 @@ class H5Partitioning(IO.Partitioning):
     
     def nPartitions(self):
         return len(self.group.keys())
+
+    def getCompositeShapePoints(self,shp):
+        shpl=[]
+        for p in range(self.nPartitions()):
+            part=self.getPartition(p)
+            shpl.append(part.getShapePoints(shp))
+        return np.concatenate(shpl,axis=1)
 
     class Partition(IO.Partitioning.Partition):
         def __init__(self,partitioning,number):
@@ -166,8 +205,6 @@ class H5Partitioning(IO.Partitioning):
         def getShapePoints(self,shape):
             return np.array(self.group["shape-points"][shape])
 
-
-
         def getConnectivity(self,to):
             return self.__getInterface("conn-%d"%to)
 
@@ -177,13 +214,15 @@ class H5Partitioning(IO.Partitioning):
         def getInternalInterface(self):
             return self.__getInterface("internal")
 
+
         def writeSolution(self,intg,solns,stats):
-            sol=self.io.createNewVolumeSolution(self,intg.runid.hex[0:8]+"-%08d"%stats['nouts'])
+            sol=self.io.createNewVolumeSolution(self,intg.runid,stats['nouts'])
+            for s in stats:
+                sol.attrs[s]=stats[s]
             shapes=intg.rallocs.prank,{(s):solns[s].shape for s in solns}
 
             shapesList = self.comm.gather(shapes, root=0)
             if self.rank == self.root :
-                print (shapesList)
                 shapes = set([ d for pr,sd in shapesList for d in sd.keys() ])
                 offsets={}
                 for s in shapes:
@@ -193,8 +232,22 @@ class H5Partitioning(IO.Partitioning):
                 offsets = None
             offsets=self.comm.bcast(offsets)
             
-            convarmap = {4: ['rho', 'rhou', 'rhov', 'E'],
-                         5: ['rho', 'rhou', 'rhov', 'rhow', 'E']}
+            #convarmap = {4: ['rho', 'rhou', 'rhov', 'E'],
+            #             5: ['rho', 'rhou', 'rhov', 'rhow', 'E']}
+
+            #for s in offsets:
+            #    offset = offsets[s][intg.rallocs.prank]
+            #    nfull  = int(offsets[s][-1])
+            #    nspts  = int(solns[s].shape[0])
+            #    nitems = int(solns[s].shape[1])
+            #    neles  = int(solns[s].shape[2])
+            #    shp = sol.create_group(s)
+            #    convNames = convarmap[nitems]
+            #    for i,name in enumerate(convNames):
+            #        print (i,name,nspts,nfull)
+            #        ds=shp.create_dataset(name,(nspts,nfull))
+            #        ds[:,offset:offset+neles]=solns[s][:,i,:]
+            #        del ds
 
             for s in offsets:
                 offset = offsets[s][intg.rallocs.prank]
@@ -202,13 +255,9 @@ class H5Partitioning(IO.Partitioning):
                 nspts  = int(solns[s].shape[0])
                 nitems = int(solns[s].shape[1])
                 neles  = int(solns[s].shape[2])
-                shp = sol.create_group(s)
-                convNames = convarmap[nitems]
-                for i,name in enumerate(convNames):
-                    print (i,name,nspts,nfull)
-                    ds=shp.create_dataset(name,(nspts,nfull))
-                    ds[:,offset:offset+neles]=solns[s][:,i,:]
-                    del ds
+                ds=sol.create_dataset(s+"-solution",(nspts,nitems,nfull))
+                ds[:,:,offset:offset+neles]=solns[s]
+                del ds
 
 
         def __getInterface(self,key):
@@ -222,7 +271,6 @@ class H5Partitioning(IO.Partitioning):
 class H5FileIO(IO,H5Partitioning.Partition):
 
     Partitioning = H5Partitioning
-
     def __init__(self,fileName,mode='r'):
         self.comm,self.rank,self.root=get_comm_rank_root()
         IO.__init__(self,fileName,mode)
@@ -239,9 +287,10 @@ class H5FileIO(IO,H5Partitioning.Partition):
 
     def openFile(self,fileName,mode='r'):
         self._file=h5py.File(fileName,mode,driver='mpio',comm=self.comm)
-        self._file.atomic=True
+        self._file.atomic=False
 
     def closeFile(self):
+        print ("Closing file")
         self._file.close()
 
     def createShapes(self,**elements):
@@ -286,6 +335,7 @@ class H5FileIO(IO,H5Partitioning.Partition):
         partG=partitioning.create_group(name)
         nParts=len(partitions)
         partG.attrs['n-partitions']=nParts
+        partG.attrs['name']=name
         parts=[partG.create_group("partition-%d"%i) for i in range(nParts)]
         if(nParts==1):
             parts[0]["interfaces"]=mesh["interfaces"]
@@ -335,6 +385,10 @@ class H5FileIO(IO,H5Partitioning.Partition):
     def getPartitionings(self):
         return self._file["mesh"]["partitionings"].keys()
 
+    def getSolutions(self):
+        return self._file["volume-solutions"].keys()
+
+
     def setVolumeSolution(self,partition,name,solutionDict,**attrs):
         sols=self._file["volume-solutions"] if "volume-solutions" in self._file else  self._file.create_group("volume-solutions")
         sol=sols.create_group(name)
@@ -345,13 +399,47 @@ class H5FileIO(IO,H5Partitioning.Partition):
             for ss in solutionDict[s]:
                 shapeSol.create_dataset(ss,data=solutionDict[s][ss])
 
-    def createNewVolumeSolution(self,partition,runid):
+
+    def createNewVolumeSolution(self,partition,runid,itno):
         vol_solution=self._file["volume-solutions"] if "volume-solutions" in self._file else self._file.create_group('volume-solutions')
-        sol = vol_solution.create_group("volume-solution-%s"%runid)
+        sol = vol_solution.create_group("volume-solution-%s-%08d"%(runid,itno))
         sol["_partitioning"]=self._file["mesh"]["partitionings"][partition.partitioning.name]
-        print ("Creating solution group: ","volume-solution-%s"%runid)
+        sol["_config"]=self._file["configs"][runid]
+        print ("Creating solution group: ","volume-solution-%s-%08d"%(runid,itno))
         return sol
 
+    def writeConfig(self,runid,cfg):
+        cfgs=self._file["configs"] if "configs" in self._file else  self._file.create_group("configs")
+        data=cfg.tostr()
+        ds=cfgs.create_dataset(runid,(1,),dtype="S5000")
+        if (self.rank==self.root):
+            ds[0]=data.encode('utf-8')
 
 
         
+    class Solution(IO.Solution):
+        def __init__(self,name,io):
+            super(self.__class__,self).__init__(name,io)
+            self.io = io
+            self._sol = self.io._file["volume-solutions"][name]
+            self.partitioningName =  self._sol['_partitioning'].attrs['name']
+            self.partitioning = self.io.getPartitioning(self.partitioningName)
+
+        
+        def getConfig(self):
+            return self._sol["_config"][0].astype("U")
+
+        def getValue(self):
+            v={}
+            for s in self.io.getShapes():
+                shp=self.partitioning.getCompositeShapePoints(s)
+                v[s]=(shp,np.array(self._sol[s+"-solution"]))
+            return v
+
+
+        
+        
+
+            
+
+
