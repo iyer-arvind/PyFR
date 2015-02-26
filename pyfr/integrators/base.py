@@ -62,7 +62,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
 
         self.nouts=0
 
-        mesh.writeConfig(self.runid,cfg)
+        mesh.io.writeConfig(cfg)
+        mesh.io.writeCode()
 
     def _kernel(self, name, nargs):
         # Transpose from [nregs][neletypes] to [neletypes][nregs]

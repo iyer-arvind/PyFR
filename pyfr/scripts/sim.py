@@ -15,7 +15,7 @@ from pyfr.rank_allocator import get_rank_allocation
 from pyfr.progress_bar import ProgressBar
 #from pyfr.readers.native import read_pyfr_data
 from pyfr.solvers import get_solver
-from pyfr.io import H5FileIO
+from pyfr.io import get_io_by_extn
 
 
 def process_run(args):
@@ -67,58 +67,57 @@ def main():
     # Parse the arguments
     args = ap.parse_args()
 
-    F=H5FileIO(args.mesh,"a")
+    with get_io_by_extn(os.path.splitext(args.mesh)[1],args.mesh,"a") as F:
 
-    cfg = Inifile.load(args.cfg)
-    partitioning = F.getPartitioning(args.partitioning)
+        cfg = Inifile.load(args.cfg)
+        partitioning = F.getPartitioning(args.partitioning)
 
-    # TODO CHANGE THIS
-    soln = None
+        # TODO CHANGE THIS
+        soln = None
 
-    # Prefork to allow us to exec processes after MPI is initialised
-    if hasattr(os, 'fork'):
-        from pytools.prefork import enable_prefork
+        # Prefork to allow us to exec processes after MPI is initialised
+        if hasattr(os, 'fork'):
+            from pytools.prefork import enable_prefork
 
-        enable_prefork()
+            enable_prefork()
 
-    # Import and hence initialise MPI
-    from mpi4py import MPI
+        # Import and hence initialise MPI
+        from mpi4py import MPI
 
-    # Ensure MPI is suitably cleaned up
-    register_finalize_handler()
+        # Ensure MPI is suitably cleaned up
+        register_finalize_handler()
 
-    # Create a backend
-    backend = get_backend(args.backend, cfg)
+        # Create a backend
+        backend = get_backend(args.backend, cfg)
 
-    # Get the mapping from physical ranks to MPI ranks
-    rallocs = get_rank_allocation(partitioning, cfg)
+        # Get the mapping from physical ranks to MPI ranks
+        rallocs = get_rank_allocation(partitioning, cfg)
 
-    # Get the current partition
-    partition = partitioning.getPartition(rallocs.prank)
+        # Get the current partition
+        partition = partitioning.getPartition(rallocs.prank)
 
-    # Construct the solver
-    solver = get_solver(backend, rallocs, partition, soln, cfg)
+        # Construct the solver
+        solver = get_solver(backend, rallocs, partition, soln, cfg)
 
-    # If we are running interactively then create a progress bar
-    if args.progress and MPI.COMM_WORLD.rank == 0:
-        pb = ProgressBar(solver.tstart, solver.tcurr, solver.tend)
+        # If we are running interactively then create a progress bar
+        if args.progress and MPI.COMM_WORLD.rank == 0:
+            pb = ProgressBar(solver.tstart, solver.tcurr, solver.tend)
 
-        # Register a callback to update the bar after each step
-        callb = lambda intg: pb.advance_to(intg.tcurr)
-        solver.completed_step_handlers.append(callb)
+            # Register a callback to update the bar after each step
+            callb = lambda intg: pb.advance_to(intg.tcurr)
+            solver.completed_step_handlers.append(callb)
 
-    # NaN sweeping
-    if args.nansweep:
-        def nansweep(intg):
-            if intg.nsteps % args.nansweep == 0:
-                if any(np.isnan(np.sum(s)) for s in intg.soln):
-                    raise RuntimeError('NaNs detected at t = {}'
-                                       .format(intg.tcurr))
-        solver.completed_step_handlers.append(nansweep)
+        # NaN sweeping
+        if args.nansweep:
+            def nansweep(intg):
+                if intg.nsteps % args.nansweep == 0:
+                    if any(np.isnan(np.sum(s)) for s in intg.soln):
+                        raise RuntimeError('NaNs detected at t = {}'
+                                           .format(intg.tcurr))
+            solver.completed_step_handlers.append(nansweep)
 
-    # Execute!
-    solver.run()
-    F.closeFile()
+        # Execute!
+        solver.run()
 
 
 if __name__ == '__main__':

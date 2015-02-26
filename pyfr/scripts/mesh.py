@@ -11,7 +11,7 @@ from pyfr.partitioners import BasePartitioner, get_partitioner_by_name
 from pyfr.readers import BaseReader, get_reader_by_name, get_reader_by_extn
 #from pyfr.readers.native import read_pyfr_data
 from pyfr.util import subclasses
-from pyfr.io import H5FileIO
+from pyfr.io import get_io_by_extn
 
 def process_convert(args):
     # Get a suitable mesh reader instance
@@ -21,13 +21,15 @@ def process_convert(args):
         extn = os.path.splitext(args.inmesh.name)[1]
         reader = get_reader_by_extn(extn, args.inmesh)
 
+    
     # Get the mesh in the PyFR format
     shapes,interfaces = reader.to_pyfrm()
 
+
     # Save to disk
-    with H5FileIO(args.outmesh,"w") as F:
-        F.createShapes(**shapes)
-        F.createInterfaces(interfaces)
+    with get_io_by_extn(os.path.splitext(args.outmesh)[1],args.outmesh,"w") as F:
+        F.writeShapes(**shapes)
+        F.writeInterfaces(interfaces)
 
 
 def process_partition(args):
@@ -54,7 +56,7 @@ def process_partition(args):
             raise RuntimeError('No partitioners available')
 
     # Partition the mesh
-    with H5FileIO(args.mesh,"a") as F:
+    with get_io_by_extn(os.path.splitext(args.mesh)[1],args.mesh,"a") as F:
         partitions = part.partition(F)
         if(not args.tag):
             args.tag="%d-parts"%len(pwts)
@@ -62,7 +64,7 @@ def process_partition(args):
             while (args.tag in F.getPartitionings()):
                 args.tag="%d-parts_%d"%(len(pwts),N)
                 N+=1
-        F.createPartitioning(args.tag,partitions)
+        F.writePartitioning(args.tag,partitions)
 
     # Prepare the solutions
     # solnit = (part_soln_fn(read_pyfr_data(s)) for s in args.solns)

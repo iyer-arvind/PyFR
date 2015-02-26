@@ -4,7 +4,7 @@ import os
 import io
 
 from collections import OrderedDict
-from configparser import SafeConfigParser, NoSectionError, NoOptionError
+from configparser import SafeConfigParser, NoSectionError, NoOptionError, InterpolationSyntaxError
 
 
 _sentinel = object()
@@ -54,6 +54,8 @@ class Inifile(object):
 
             self._cp.set(section, option, str(default))
             val = self._cp.get(section, option, raw=raw, vars=vars)
+        except InterpolationSyntaxError:
+            val = self._cp.get(section, option, raw=True, vars=vars)
 
         return os.path.expandvars(val)
 
@@ -97,3 +99,17 @@ class Inifile(object):
         buf = io.StringIO()
         self._cp.write(buf)
         return buf.getvalue()
+
+    def todict(self):
+        dct={}
+        for s in self._cp.sections():
+            sec={}
+            for o in self._cp.options(s):
+                sec[o]=self.get(s,o)
+            dct[s]=sec
+        return dct
+
+    def hash(self):
+        from pyfr import hashobject
+        return hashobject.hashobject(self.todict()).hexdigest()[0:10]
+

@@ -19,8 +19,8 @@ from pyfr.writers import paraview
 now=time()
 
 DD=dict(st_mode=S_IFDIR|0o755,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
-RF=dict(st_mode=S_IFREG|0o400,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
-WF=dict(st_mode=S_IFREG|0o600,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=2,st_gid=os.getgid(),st_uid=os.getuid())
+RF=dict(st_mode=S_IFREG|0o440,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=1,st_blocks=1,st_gid=os.getgid(),st_uid=os.getuid())
+WF=dict(st_mode=S_IFREG|0o640,st_ctime=now,st_mtime=now,st_atime=now,st_nlink=1,st_blocks=1,st_gid=os.getgid(),st_uid=os.getuid())
 
 
 def register(f):
@@ -58,6 +58,7 @@ class PyFRFuse(LoggingMixIn, Operations):
         self.__dirs['/']=DD
         self.__update_mesh()
         self.__update_solutions()
+        self.__update_configs()
 
     def __update_mesh(self):
         self.__dirs['/mesh']=DD
@@ -71,13 +72,22 @@ class PyFRFuse(LoggingMixIn, Operations):
                 self.__files['/volume-solutions/'+s+"/"+sh+".a_msh"]=RF
                 self.__files['/volume-solutions/'+s+"/"+sh+".a_sol"]=RF
             self.__files['/volume-solutions/'+s+".vtu"]=RF
-    
+
+    def __update_configs(self):
+        self.__dirs['/configs']=DD
+        for c in self._file.getConfigs():
+            self.__files["/configs/"+c+".ini"]=WF
+
+
+    @register
     def __fetchFile(self,path):
         if(path in self.__dataCache):
             return self.__dataCache[path]
 
         data_re=re.compile('/volume-solutions/(?P<S>volume-solution-[a-z0-9]*-[0-9]*)/(?P<H>[a-z0-9]*).(?P<E>[a-z_]*)')
         vtu_re=re.compile('/volume-solutions/(?P<S>volume-solution-[a-z0-9]*-[0-9]*).vtu')
+        cfg_re=re.compile('/configs/(?P<C>[a-z0-9]*)\.ini')
+
         M=data_re.match(path)
         if(M):
             D=M.groupdict()
@@ -107,6 +117,17 @@ class PyFRFuse(LoggingMixIn, Operations):
             writer.write_out()
             self.__dataCache[path]=fh
             return fh
+
+        M=cfg_re.match(path)
+        if(M):
+            D=M.groupdict()
+            cfg=self._file.getConfig(D['C'])
+            fh=BytesIO()
+            fh.write(cfg.encode())
+            self.__dataCache[path]=fh
+            return fh
+
+
         
         return None
 
@@ -145,7 +166,7 @@ class PyFRFuse(LoggingMixIn, Operations):
             fh=self.__fetchFile(path)
             if(fh):
                 fh.seek(0, os.SEEK_END)
-                self.__files[path].update({'st_size':fh.tell()})
+                self.__files[path].update({'st_size':fh.tell(),'st_blocks':(4096*int(fh.tell()/4096+0.9999999))})
             return self.__files[path]
 
         raise FuseOSError(errno.ENOENT)
@@ -159,6 +180,24 @@ class PyFRFuse(LoggingMixIn, Operations):
 
     @register
     def readlink(self, path):
+        raise FuseOSError(errno.EACCES)
+
+
+    @register
+    def getxattr(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def setxattr(self, path):
+        raise FuseOSError(errno.EACCES)
+
+
+    @register
+    def listxattr(self, path):
+        raise FuseOSError(errno.EACCES)
+
+    @register
+    def removexattr(self, path):
         raise FuseOSError(errno.EACCES)
 
     @register
@@ -210,6 +249,10 @@ class PyFRFuse(LoggingMixIn, Operations):
         raise FuseOSError(errno.NOENT)
 
     @register
+    def opendir(self, path, mode, fi=None):
+        raise FuseOSError(errno.EACCES)
+
+    @register
     def create(self, path, mode, fi=None):
         raise FuseOSError(errno.EACCES)
 
@@ -241,9 +284,17 @@ class PyFRFuse(LoggingMixIn, Operations):
         #raise FuseOSError(errno.EACCES)
 
     @register
+    def releasedir(self, path, fh):
+        pass
+
+
+    @register
     def fsync(self, path, fdatasync, fh):
         raise FuseOSError(errno.EACCES)
 
+    @register
+    def fsyncdir(self, path, fdatasync, fh):
+        raise FuseOSError(errno.EACCES)
 
 if __name__ == '__main__':
     if len(argv) != 3:
