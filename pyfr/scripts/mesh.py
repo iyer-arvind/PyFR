@@ -4,6 +4,7 @@ from argparse import FileType
 import itertools as it
 import os
 
+import h5py
 import numpy as np
 
 from pyfr.partitioners import BasePartitioner, get_partitioner_by_name
@@ -19,7 +20,7 @@ def add_args(ap):
     ap_convert = sp.add_parser('convert', help='convert --help')
     ap_convert.add_argument('inmesh', type=FileType('r'),
                             help='input mesh file')
-    ap_convert.add_argument('outmesh', type=FileType('wb'),
+    ap_convert.add_argument('outmesh', type=str,
                             help='output PyFR mesh file')
     types = sorted(cls.name for cls in subclasses(BaseReader))
     ap_convert.add_argument('-t', dest='type', choices=types,
@@ -56,7 +57,9 @@ def process_convert(args):
     mesh = reader.to_pyfrm()
 
     # Save to disk
-    np.savez(args.outmesh, **mesh)
+    msh5 = h5py.File(args.outmesh, 'w')
+    for k in mesh:
+        msh5.create_dataset(k, data=mesh[k])
 
 
 def process_partition(args):
@@ -102,5 +105,7 @@ def process_partition(args):
         path = os.path.join(args.outd, os.path.basename(path.rstrip('/')))
 
         # Open and save
-        with open(path, 'wb') as f:
-            np.savez(f, **data)
+        # Save to disk
+        msh5 = h5py.File(path, 'w')
+        for k in data:
+            msh5.create_dataset(k, data=data[k])

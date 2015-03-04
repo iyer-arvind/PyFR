@@ -8,6 +8,7 @@ import errno
 import os
 import re
 
+import h5py
 import numpy as np
 
 from pyfr.shapes import BaseShape
@@ -166,6 +167,21 @@ class PyFRFileReader(PyFRBaseReader):
         return len(self._npf.files)
 
 
+class PyFRH5Reader(PyFRBaseReader):
+    """Does everything that file reader does but with a h5py file"""
+    def __init__(self, fname):
+        self._file = h5py.File(fname, 'r')
+
+    def __getitem__(self, aname):
+        return np.array(self._file[aname])
+
+    def __iter__(self):
+        return iter(self._file)
+
+    def __len__(self):
+        return len(self._file)
+
+
 def read_pyfr_data(fname):
     """Reads .pyfr{m, s}-{file, dir} archive
 
@@ -207,4 +223,7 @@ def read_pyfr_data(fname):
     if os.path.isdir(fname):
         return PyFRDirReader(fname)
     else:
-        return PyFRFileReader(fname)
+        try:
+            return PyFRFileReader(fname)
+        except OSError:
+            return PyFRH5Reader(fname)
