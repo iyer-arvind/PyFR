@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 
-from abc import abstractmethod
 import itertools as it
 import os
+
 import h5py
+
 import numpy as np
 
 from pyfr.integrators.base import BaseIntegrator
 from pyfr.mpiutil import get_comm_rank_root
-from pyfr.util import rm
 
 
-class BaseWriter(BaseIntegrator):
+class H5Writer(BaseIntegrator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -21,51 +21,6 @@ class BaseWriter(BaseIntegrator):
 
         # Output counter (incremented each time output() is called)
         self.nout = 0
-
-    def output(self, solnmap, stats):
-        comm, rank, root = get_comm_rank_root()
-
-        # Convert the config and stats objects to strings
-        if rank == root:
-            metadata = dict(config=self.cfg.tostr(),
-                            stats=stats.tostr(),
-                            mesh_uuid=str(self._mesh_uuid))
-        else:
-            metadata = None
-
-        # Determine the output path
-        path = self._get_output_path()
-
-        # Delegate to _write to do the actual outputting
-        self._write(path, solnmap, metadata)
-
-        # Increment the output number
-        self.nout += 1
-
-    @abstractmethod
-    def _write(self, path, solnmap, metadata):
-        pass
-
-    def _get_output_path(self):
-        # Substitute %(t) and %(n) for the current time and output number
-        fname = self._basename % dict(t=self.tcurr, n=self.nout)
-
-        # Append the '.pyfrs' extension
-        if not fname.endswith('.pyfrs'):
-            fname += '.pyfrs'
-
-        return os.path.join(self._basedir, fname)
-
-    def _get_name_for_soln(self, etype, prank=None):
-        prank = prank or self.rallocs.prank
-        return 'soln_{}_p{}'.format(etype, prank)
-
-
-class H5Writer(BaseWriter):
-    writer_name = 'pyfrs-h5-file'
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
         # MPI info
         comm, rank, root = get_comm_rank_root()
@@ -82,9 +37,9 @@ class H5Writer(BaseWriter):
         parallel &= not self.cfg.getbool('soln-output', 'serial-h5', False)
 
         if parallel:
-            self._write = self._writeParallel
+            self._write = self._write_parallel
         else:
-            self._write = self._writeSerial
+            self._write = self._write_serial
 
         if parallel:
             if rank == root:
@@ -97,8 +52,8 @@ class H5Writer(BaseWriter):
                             )
             else:
                 sollist = None
-            self.sollist = comm.bcast(sollist, root=root)
 
+            self.sollist = comm.bcast(sollist, root=root)
         else:
             if rank == root:
                 self._mpi_rbufs = mpi_rbufs = []
@@ -121,39 +76,68 @@ class H5Writer(BaseWriter):
                             mpi_rreqs.append(rreq)
                             mpi_names.append(name)
 
-    def _write(self, path, solnmap, metadata):
-        raise Exception
-
-    def _writeParallel(self, path, solnmap, metadata):
-        from mpi4py import MPI
-
+    def output(self, solnmap, stats):
         comm, rank, root = get_comm_rank_root()
 
-        h5file = h5py.File(path, 'w', driver='mpio', comm=comm)
-        smap = {}
-        for s, shape in self.sollist:
-            smap[s] = h5file.create_dataset(
-                    s, shape, dtype=self.backend.fpdtype)
-
-        for e in solnmap:
-            s = self._get_name_for_soln(e, self.rallocs.prank)
-            smap[s][:] = solnmap[e]
-
+        # Convert the config and stats objects to strings
         if rank == root:
-            mmap = [(k, len(v.encode()))
-                    for k, v in metadata.items()]
+            metadata = dict(config=self.cfg.tostr(),
+                            stats=stats.tostr(),
+                            mesh_uuid=self._mesh_uuid)
         else:
-            mmap = None
+            metadata = None
 
-        mmap = comm.bcast(mmap, root=root)
-        for name, size in mmap:
-            d = h5file.create_dataset(name, (), dtype="S{}".format(size))
+        # Determine the output path
+        path = self._get_output_path()
+
+        # Delegate to _write to do the actual outputting
+        self._write(path, solnmap, metadata)
+
+        # Increment the output number
+        self.nout += 1
+
+    def _get_output_path(self):
+        # Substitute %(t) and %(n) for the current time and output number
+        fname = self._basename % dict(t=self.tcurr, n=self.nout)
+
+        # Append the '.pyfrs' extension
+        if not fname.endswith('.pyfrs'):
+            fname += '.pyfrs'
+
+        return os.path.join(self._basedir, fname)
+
+    def _get_name_for_soln(self, etype, prank=None):
+        prank = prank or self.rallocs.prank
+        return 'soln_{}_p{}'.format(etype, prank)
+
+    def _write_parallel(self, path, solnmap, metadata):
+        comm, rank, root = get_comm_rank_root()
+
+        with h5py.File(path, 'w', driver='mpio', comm=comm) as h5file:
+            smap = {}
+            for s, shape in self.sollist:
+                smap[s] = h5file.create_dataset(
+                                 s, shape, dtype=self.backend.fpdtype
+                          )
+
+            for e, sol in solnmap.items():
+                s = self._get_name_for_soln(e, self.rallocs.prank)
+                smap[s][:] = sol
+
+            # Metadata information has to be transferred to all the ranks
             if rank == root:
-                d.write_direct(np.array(metadata[name]).astype('S'))
+                mmap = [(k, len(v.encode()))
+                        for k, v in metadata.items()]
+            else:
+                mmap = None
 
-        h5file.close()
+            mmap = comm.bcast(mmap, root=root)
+            for name, size in mmap:
+                d = h5file.create_dataset(name, (), dtype='S{}'.format(size))
+                if rank == root:
+                    d.write_direct(np.array(metadata[name]).astype('S'))
 
-    def _writeSerial(self, path, solnmap, metadata):
+    def _write_serial(self, path, solnmap, metadata):
         from mpi4py import MPI
 
         comm, rank, root = get_comm_rank_root()
@@ -173,7 +157,6 @@ class H5Writer(BaseWriter):
             # Create the output dictionary
             outdict = dict(zip(names, solns), **metadata)
 
-            h5file = h5py.File(path, 'w')
-            for k in outdict:
-                h5file.create_dataset(k, data=outdict[k])
-            h5file.close()
+            with h5py.File(path, 'w') as h5file:
+                for k, v in outdict.items():
+                    h5file.create_dataset(k, data=v)

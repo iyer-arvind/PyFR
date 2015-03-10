@@ -137,8 +137,13 @@ class PyFRDirReader(PyFRBaseReader):
 
     def __getitem__(self, aname):
         try:
-            return np.load(os.path.join(self.fname, aname + '.npy'),
-                           mmap_mode='r')
+            ret = np.load(
+                    os.path.join(self.fname, aname + '.npy'),
+                    mmap_mode='r')
+            ret = ret.item() if ret.dtype.kind == 'S' else ret
+            if(isinstance(ret, bytes)):
+                return ret.decode()
+            return ret
         except IOError as e:
             if e.errno == errno.ENOENT:
                 raise KeyError
@@ -158,7 +163,13 @@ class PyFRFileReader(PyFRBaseReader):
         self._npf = np.load(fname)
 
     def __getitem__(self, aname):
-        return self._npf[aname]
+        ret = (
+                self._npf[aname].item()
+                if self._npf[aname].dtype.kind in 'SU'
+                else self._npf[aname])
+        if(isinstance(ret, bytes)):
+            return ret.decode()
+        return ret
 
     def __iter__(self):
         return iter(self._npf.files)
@@ -173,7 +184,13 @@ class PyFRH5Reader(PyFRBaseReader):
         self._file = h5py.File(fname, 'r')
 
     def __getitem__(self, aname):
-        return np.array(self._file[aname])
+        ret = (
+                self._file[aname].value
+                if self._file[aname].shape == ()
+                else np.array(self._file[aname]))
+        if(isinstance(ret, bytes)):
+            return ret.decode()
+        return ret
 
     def __iter__(self):
         return iter(self._file)

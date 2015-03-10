@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 
-from argparse import FileType
 import itertools as it
 import os
+from argparse import FileType
 
 import h5py
-import numpy as np
 
 from pyfr.partitioners import BasePartitioner, get_partitioner_by_name
-from pyfr.readers import BaseReader, get_reader_by_name, get_reader_by_extn
+from pyfr.readers import BaseReader, get_reader_by_extn, get_reader_by_name
 from pyfr.readers.native import read_pyfr_data
 from pyfr.util import subclasses
 
@@ -57,9 +56,9 @@ def process_convert(args):
     mesh = reader.to_pyfrm()
 
     # Save to disk
-    msh5 = h5py.File(args.outmesh, 'w')
-    for k in mesh:
-        msh5.create_dataset(k, data=mesh[k])
+    with h5py.File(args.outmesh, 'w') as msh5:
+        for k, v in mesh.items():
+            msh5.create_dataset(k, data=v)
 
 
 def process_partition(args):
@@ -106,6 +105,6 @@ def process_partition(args):
 
         # Open and save
         # Save to disk
-        msh5 = h5py.File(path, 'w')
-        for k in data:
-            msh5.create_dataset(k, data=data[k])
+        with h5py.File(path, 'w') as msh5:
+            for k, v in data.items():
+                msh5.create_dataset(k, data=v)

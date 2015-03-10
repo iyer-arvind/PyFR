@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from abc import ABCMeta, abstractmethod
-import re
 import uuid
-
-import numpy as np
+from abc import ABCMeta, abstractmethod
 
 
 class BaseReader(object, metaclass=ABCMeta):
@@ -20,6 +17,6 @@ class BaseReader(object, metaclass=ABCMeta):
         mesh = self._to_raw_pyfrm()
 
         # Add metadata
-        mesh['mesh_uuid'] = str(uuid.uuid4())
+        mesh['mesh_uuid'] = uuid.uuid4().hex
 
         return mesh
