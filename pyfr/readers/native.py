@@ -3,16 +3,16 @@
 """Allows for interopability between .pyfr{m, s}-{file, dir} archive formats
 
 """
-from collections import Mapping, OrderedDict
 import errno
 import os
 import re
 
 import h5py
 import numpy as np
+from collections import Mapping, OrderedDict
 
 from pyfr.shapes import BaseShape
-from pyfr.util import subclasses, lazyprop
+from pyfr.util import lazyprop, subclasses
 
 
 class PyFRBaseReader(Mapping):
@@ -140,9 +140,12 @@ class PyFRDirReader(PyFRBaseReader):
             ret = np.load(
                     os.path.join(self.fname, aname + '.npy'),
                     mmap_mode='r')
-            ret = ret.item() if ret.dtype.kind == 'S' else ret
-            if(isinstance(ret, bytes)):
+
+            ret = ret.item() if ret.dtype.kind in 'SU' else ret
+
+            if isinstance(ret, bytes):
                 return ret.decode()
+
             return ret
         except IOError as e:
             if e.errno == errno.ENOENT:
@@ -163,12 +166,13 @@ class PyFRFileReader(PyFRBaseReader):
         self._npf = np.load(fname)
 
     def __getitem__(self, aname):
-        ret = (
-                self._npf[aname].item()
-                if self._npf[aname].dtype.kind in 'SU'
-                else self._npf[aname])
-        if(isinstance(ret, bytes)):
+        ret = self._npf[aname]
+
+        ret = ret.item() if ret.dtype.kind in 'SU' else ret
+
+        if isinstance(ret, bytes):
             return ret.decode()
+
         return ret
 
     def __iter__(self):
@@ -184,12 +188,17 @@ class PyFRH5Reader(PyFRBaseReader):
         self._file = h5py.File(fname, 'r')
 
     def __getitem__(self, aname):
-        ret = (
-                self._file[aname].value
-                if self._file[aname].shape == ()
-                else np.array(self._file[aname]))
-        if(isinstance(ret, bytes)):
+        ret = self._file[aname]
+
+        if self._file[aname].shape == ():
+            ret = ret.value
+
+        else:
+            ret = np.array(ret)
+
+        if isinstance(ret, bytes):
             return ret.decode()
+
         return ret
 
     def __iter__(self):

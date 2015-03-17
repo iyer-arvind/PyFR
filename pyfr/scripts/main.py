@@ -3,6 +3,7 @@
 
 from argparse import ArgumentParser
 
+import pyfr.scripts.interpolate
 import pyfr.scripts.mesh
 import pyfr.scripts.sim
 import pyfr.scripts.postp
@@ -16,13 +17,15 @@ def main():
     sap = {
         'mesh': sp.add_parser('mesh', help='mesh sub-command help'),
         'sim': sp.add_parser('sim', help='sim sub-command help'),
-        'postp': sp.add_parser('postp', help='postp sub-command help')
+        'postp': sp.add_parser('postp', help='postp sub-command help'),
+        'interp': sp.add_parser('interp', help='interp sub-command help')
     }
 
     # Populate the subcommands
     pyfr.scripts.mesh.add_args(sap['mesh'])
     pyfr.scripts.sim.add_args(sap['sim'])
     pyfr.scripts.postp.add_args(sap['postp'])
+    pyfr.scripts.interpolate.add_args(sap['interp'])
 
     # Parse the arguments
     args = ap.parse_args()
