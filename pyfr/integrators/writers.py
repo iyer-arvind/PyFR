@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from collections import defaultdict, OrderedDict
 import itertools as it
 import os
 
@@ -40,17 +41,26 @@ class H5Writer(BaseIntegrator):
 
             if rank == root:
                 sollist = []
+                sizelist = defaultdict(
+                    lambda: np.zeros([comm.Get_size(), 3], dtype='int32'))
                 for mrank, meleinfo in enumerate(eleinfo):
                     prank = self.rallocs.mprankmap[mrank]
-                    sollist.extend(
-                        (self._get_name_for_soln(etype, prank), dims)
-                        for etype, dims in meleinfo
-                    )
+                    for etype, dims in meleinfo:
+                        sollist.append(
+                            (self._get_name_for_soln(etype, prank), dims))
+                        sizelist[etype][prank, :] = dims
 
+                offsetlist = OrderedDict()
+                for e in sizelist:
+                    offsetlist[e] =\
+                        (tuple(sizelist[e][0, :2]),
+                         np.hstack([[0], np.cumsum(sizelist[e][:, 2])]))
             else:
                 sollist = None
+                offsetlist = None
+            self.sollist, self.offsetlist =\
+                comm.bcast((sollist, offsetlist), root=root)
 
-            self.sollist = comm.bcast(sollist, root=root)
         else:
             self._write = self._write_serial
 
@@ -106,7 +116,7 @@ class H5Writer(BaseIntegrator):
         return os.path.join(self._basedir, fname)
 
     def _get_name_for_soln(self, etype, prank=None):
-        prank = prank or self.rallocs.prank
+        prank = self.rallocs.prank if prank is None else prank
         return 'soln_{}_p{}'.format(etype, prank)
 
     def _write_parallel(self, path, solnmap, metadata):
@@ -114,14 +124,33 @@ class H5Writer(BaseIntegrator):
 
         with h5py.File(path, 'w', driver='mpio', comm=comm) as h5file:
             smap = {}
-            for s, shape in self.sollist:
-                smap[s] = h5file.create_dataset(
-                    s, shape, dtype=self.backend.fpdtype
-                )
+            if self.cfg.getbool('soln-output', 'combined-arrays', False):
+                for e in self.offsetlist:
+                    smap[e] = h5file.create_dataset(
+                        'soln_{}'.format(e), self.offsetlist[e][0] +
+                        (self.offsetlist[e][1][-1],),
+                        dtype=self.backend.fpdtype)
+                    for prank in range(comm.Get_size()):
+                        offs = self.offsetlist[e][1][prank]
+                        offe = self.offsetlist[e][1][prank+1]
+                        if(offe > offs):
+                            name = self._get_name_for_soln(e, prank)
+                            smap[e].attrs[name] = np.array([offs, offe])
 
-            for e, sol in solnmap.items():
-                s = self._get_name_for_soln(e, self.rallocs.prank)
-                smap[s][:] = sol
+                for e in solnmap:
+                    offs = self.offsetlist[e][1][self.rallocs.prank]
+                    offe = self.offsetlist[e][1][self.rallocs.prank+1]
+                    smap[e][..., offs:offe] = solnmap[e]
+
+            else:
+                for s, shape in self.sollist:
+                    smap[s] = h5file.create_dataset(
+                        s, shape, dtype=self.backend.fpdtype
+                    )
+
+                for e, sol in solnmap.items():
+                    s = self._get_name_for_soln(e, self.rallocs.prank)
+                    smap[s][:] = sol
 
             # Metadata information has to be transferred to all the ranks
             if rank == root:

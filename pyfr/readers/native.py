@@ -180,22 +180,35 @@ class PyFRH5Reader(PyFRBaseReader):
     """Does everything that file reader does but with a h5py file"""
     def __init__(self, fname):
         self._file = h5py.File(fname, 'r')
+        self._fields = [fi for f in self._file for fi in
+                        (self._file[f].attrs if len(self._file[f].attrs)
+                         else [f])]
+        print(self._fields)
 
     def __getitem__(self, aname):
-        ret = self._file[aname]
+        if aname in self._file:
+            ret = self._file[aname]
 
-        if ret.shape == ():
-            ret = ret.value
+            if ret.shape == ():
+                ret = ret.value
+            else:
+                ret = np.array(ret)
+            return ret.decode() if isinstance(ret, bytes) else ret
         else:
-            ret = np.array(ret)
+            csolname = aname.rsplit('_', 1)[0]
+            if csolname in self._file:
+                off = self._file[csolname].attrs[aname]
+                print(aname, off)
+                return self._file[csolname][..., off[0]:off[1]]
 
-        return ret.decode() if isinstance(ret, bytes) else ret
+            else:
+                raise IndexError(aname)
 
     def __iter__(self):
-        return iter(self._file)
+        return iter(self._fields)
 
     def __len__(self):
-        return len(self._file)
+        return len(self._fields)
 
 
 def read_pyfr_data(fname):
