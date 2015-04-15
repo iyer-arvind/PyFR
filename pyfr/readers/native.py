@@ -183,7 +183,6 @@ class PyFRH5Reader(PyFRBaseReader):
         self._fields = [fi for f in self._file for fi in
                         (self._file[f].attrs if len(self._file[f].attrs)
                          else [f])]
-        print(self._fields)
 
     def __getitem__(self, aname):
         if aname in self._file:
@@ -198,7 +197,6 @@ class PyFRH5Reader(PyFRBaseReader):
             csolname = aname.rsplit('_', 1)[0]
             if csolname in self._file:
                 off = self._file[csolname].attrs[aname]
-                print(aname, off)
                 return self._file[csolname][..., off[0]:off[1]]
 
             else:

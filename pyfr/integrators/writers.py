@@ -138,9 +138,15 @@ class H5Writer(BaseIntegrator):
                             smap[e].attrs[name] = np.array([offs, offe])
 
                 for e in solnmap:
+                    data = np.array(solnmap[e])
                     offs = self.offsetlist[e][1][self.rallocs.prank]
                     offe = self.offsetlist[e][1][self.rallocs.prank+1]
-                    smap[e][..., offs:offe] = solnmap[e]
+                    shape = self.offsetlist[e][0] + (offe-offs, )
+                    start = tuple(0 for s in shape[:-1]) + (offs, )
+                    mspace = h5py.h5s.create_simple(shape)
+                    fspace = smap[e].id.get_space()
+                    fspace.select_hyperslab(start, shape)
+                    smap[e]._id.write(mspace, fspace, data)
 
             else:
                 for s, shape in self.sollist:
