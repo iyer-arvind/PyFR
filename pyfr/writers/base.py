@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from pyfr.readers.native import read_pyfr_data
 from pyfr.inifile import Inifile
+from pyfr.readers.native import read_pyfr_data
 
 
 class BaseWriter(object):

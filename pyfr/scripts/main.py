@@ -194,6 +194,15 @@ def process_partition(args):
 
 
 def process_export(args):
+    # Import but do not initialise MPI
+    from mpi4py import MPI
+
+    # Manually initialise MPI
+    MPI.Init()
+
+    # Ensure MPI is suitably cleaned up
+    register_finalize_handler()
+
     # Get writer instance by specified type or outf extension
     if args.type:
         writer = get_writer_by_name(args.type, args)

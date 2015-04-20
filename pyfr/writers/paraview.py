@@ -7,6 +7,8 @@ import os
 
 import numpy as np
 
+from pyfr.mpiutil import get_comm_rank_root
+from pyfr.rank_allocator import get_rank_allocation
 from pyfr.shapes import BaseShape
 from pyfr.solvers import BaseSystem
 from pyfr.util import subclass_where
@@ -27,9 +29,23 @@ class ParaviewWriter(BaseWriter):
 
     def write_out(self):
         extn = os.path.splitext(self.outf)[1]
+        comm, rank, root = get_comm_rank_root()
+        try:
+            self.rallocs = get_rank_allocation(self.mesh, self.cfg)
+            self.single_rank = comm.Get_size() == 1
+
+        except RuntimeError:
+            assert comm.Get_size() == 1, 'MPI Ranks not same as partitions nor 1'
+            self.single_rank = True
+
+        assert extn == '.pvtu' or self.single_rank, '.vtu writer must be a '\
+            'single mpi rank'
+
         self._write_out(extn == '.pvtu')
 
     def _write_out(self, parallel):
+        comm, rank, root = get_comm_rank_root()
+
         # Set default divisor to solution order
         if self.args.divisor == 0:
             self.args.divisor = self.cfg.getint('solver', 'order')
@@ -41,11 +57,18 @@ class ParaviewWriter(BaseWriter):
             part = mk.split('_')[-1]
 
             if parallel:
-                pfn = '{}_{}.vtu'.format(basename, part)
+                if self.single_rank:
+                    pfn = '{}_{}.vtu'.format(basename, part)
+                else:
+                    if int(part.replace('p', '')) == rank:
+                        pfn = '{}_{}.vtu'.format(basename, part)
+                    else:
+                        pfn = None
             else:
                 pfn = self.outf
 
-            parts[pfn].append((mk, sk))
+            if pfn:
+                parts[pfn].append((mk, sk))
 
         for pfn, misil in parts.items():
             with open(pfn, 'wb') as fh:
@@ -73,7 +96,10 @@ class ParaviewWriter(BaseWriter):
 
                 # Write .vtu file footer
                 write_sp('\n</AppendedData>\n</VTKFile>')
-        if parallel:
+
+        all_parts = comm.gather(tuple(parts.keys()))
+        if parallel and rank == root:
+            all_parts = list(i for p in all_parts for i in p)
             with open(self.outf, 'wb') as fh:
                 write_s = lambda s: fh.write(s.encode('utf-8'))
                 write_s('<?xml version="1.0" ?>\n<VTKFile '
@@ -82,7 +108,7 @@ class ParaviewWriter(BaseWriter):
                 mk, sk = next(iter(parts.values()))[0]
                 _write_vtu_header(self.args, fh, self.mesh_inf[mk],
                                   self.soln_inf[sk], 0, True)
-                for pfn in parts:
+                for pfn in all_parts:
                     relpath = os.path.relpath(pfn, os.path.dirname(self.outf))
                     write_s('<Piece Source="{}"/>\n'.format(relpath))
                 write_s('</PUnstructuredGrid>\n</VTKFile>\n')
