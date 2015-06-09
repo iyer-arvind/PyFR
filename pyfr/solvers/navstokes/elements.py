@@ -3,6 +3,7 @@
 import numpy as np
 
 from pyfr.backends.base.kernels import ComputeMetaKernel
+from pyfr.nputil import npeval
 from pyfr.solvers.baseadvecdiff import BaseAdvectionDiffusionElements
 from pyfr.solvers.euler.elements import BaseFluidElements
 from pyfr.util import ndrange
@@ -41,7 +42,8 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
                                                  aliases=avis_upts_temp,
                                                  tags=tags)
 
-            backend.pointwise.register('pyfr.solvers.navstokes.kernels.entropy')
+            backend.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.entropy')
             backend.pointwise.register('pyfr.solvers.navstokes.kernels.avis')
 
             def artf_vis():
@@ -93,15 +95,30 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         else:
             raise ValueError('Invalid shock-capturing option')
 
+        sponge_type = self.cfg.get('sponge', 'sponge-type', 'none')
+
+        if sponge_type == 'visc':
+            tplargs['spng_vis'] = 'mu'
+            ploc = self.ploc_at_np('upts').swapaxes(0, 1)
+            spngmu_expr = self.cfg.get('sponge', 'sponge-mu')
+            mu = npeval(spngmu_expr,
+                        {d: ploc[i] for i, d in enumerate('xyz'[:self.ndims])})
+            spngmu_upts = self._be.const_matrix(mu, tags={'align'})
+        elif sponge_type == 'none':
+            tplargs['spng_vis'] = 'none'
+            spngmu_upts = None
+        else:
+            raise ValueError('Invalid sponge-type option')
+
         if 'flux' in self.antialias:
             self.kernels['tdisf'] = lambda: backend.kernel(
                 'tflux', tplargs=tplargs, dims=[self.nqpts, self.neles],
                 u=self._scal_qpts, smats=self.smat_at('qpts'),
-                f=self._vect_qpts, amu=avis_upts
+                f=self._vect_qpts, amu=avis_upts, spngmu=spngmu_upts
             )
         else:
             self.kernels['tdisf'] = lambda: backend.kernel(
                 'tflux', tplargs=tplargs, dims=[self.nupts, self.neles],
                 u=self.scal_upts_inb, smats=self.smat_at('upts'),
-                f=self._vect_upts, amu=avis_upts
+                f=self._vect_upts, amu=avis_upts, spngmu=spngmu_upts
             )
