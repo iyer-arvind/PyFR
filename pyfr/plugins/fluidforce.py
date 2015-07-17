@@ -87,7 +87,7 @@ class FluidForcePlugin(BasePlugin):
 
     def __call__(self, intg):
         # Return if no output is due
-        if intg.nacptsteps % self.nsteps:
+        if intg.nsteps % self.nsteps:
             return
 
         # MPI info
