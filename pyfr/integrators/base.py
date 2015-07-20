@@ -51,6 +51,7 @@ class BaseIntegrator(object):
 
         # Extract the UUID of the mesh (to be saved with solutions)
         self._mesh_uuid = mesh['mesh_uuid']
+        self._mesh = mesh
 
         # Get a queue for subclasses to use
         self._queue = backend.queue()
@@ -122,6 +123,8 @@ class BaseIntegrator(object):
 
             # Output
             self.output(solnmap, stats)
+
+        self.completed_step_handlers.finalize(self)
 
     def collect_stats(self, stats):
         stats.set('solver-time-integrator', 'tcurr', self.tcurr)

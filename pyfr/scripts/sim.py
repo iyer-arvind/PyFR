@@ -87,23 +87,6 @@ def main():
     # Construct the solver
     solver = get_solver(backend, rallocs, mesh, soln, cfg)
 
-    # If we are running interactively then create a progress bar
-    if args.progress and MPI.COMM_WORLD.rank == 0:
-        pb = ProgressBar(solver.tstart, solver.tcurr, solver.tend)
-
-        # Register a callback to update the bar after each step
-        callb = lambda intg: pb.advance_to(intg.tcurr)
-        solver.completed_step_handlers.append(callb)
-
-    # NaN sweeping
-    if args.nansweep:
-        def nansweep(intg):
-            if intg.nsteps % args.nansweep == 0:
-                if any(np.isnan(np.sum(s)) for s in intg.soln):
-                    raise RuntimeError('NaNs detected at t = {}'
-                                       .format(intg.tcurr))
-        solver.completed_step_handlers.append(nansweep)
-
     # Execute!
     solver.run()
 

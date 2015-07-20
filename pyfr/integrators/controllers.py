@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import math
+import re
 
 from pyfr.integrators.base import BaseIntegrator
+from pyfr.plugins import get_plugin
 from pyfr.util import memoize, proxylist
 
 
@@ -20,6 +22,9 @@ class BaseController(BaseIntegrator):
         # Bank index of solution
         self._idxcurr = 0
 
+        # Solution cache
+        self._curr_soln = None
+
         # Accepted and rejected step counters
         self.nacptsteps = 0
         self.nrjctsteps = 0
@@ -27,6 +32,21 @@ class BaseController(BaseIntegrator):
 
         # Event handlers for advance_to
         self.completed_step_handlers = proxylist([])
+
+        # Load any plugins specified in the config file
+        for s in self.cfg.sections():
+            m = re.match('soln-plugin-(.+?)(?:-(.+))?$', s)
+            if m:
+                cfgsect, name, suffix = m.group(0), m.group(1), m.group(2)
+
+                # Instantiate
+                plugin = get_plugin(name, self, cfgsect, suffix)
+
+                # Register as an event handler
+                self.completed_step_handlers.append(plugin)
+
+        # Delete the memory-intensive elements map from the system
+        del self._system.ele_map
 
     def _accept_step(self, dt, idxcurr):
         self.tcurr += dt
@@ -38,6 +58,9 @@ class BaseController(BaseIntegrator):
         # Filter
         if self._ffreq and self.nacptsteps % self._ffreq == 0:
             self._system.filt(idxcurr)
+
+        # Invalidate the solution cache
+        self._curr_soln = None
 
         # Fire off any event handlers
         self.completed_step_handlers(self)
@@ -57,7 +80,11 @@ class BaseController(BaseIntegrator):
 
     @property
     def soln(self):
-        return self._system.ele_scal_upts(self._idxcurr)
+        # If we do not have the solution cached then fetch it
+        if not self._curr_soln:
+            self._curr_soln = self._system.ele_scal_upts(self._idxcurr)
+
+        return self._curr_soln
 
 
 class NoneController(BaseController):
@@ -139,6 +166,15 @@ class PIController(BaseController):
         if t < self.tcurr:
             raise ValueError('Advance time is in the past')
 
+        # Constants
+        maxf = self._maxfac
+        minf = self._minfac
+        saff = self._saffac
+        sord = self._stepper_order
+
+        expa = self._alpha / self._stepper_order
+        expb = self._beta / self._stepper_order
+
         while self.tcurr < t:
             # Decide on the time step
             dt = max(min(t - self.tcurr, self._dt), self._dtmin)
@@ -149,16 +185,8 @@ class PIController(BaseController):
             # Estimate the error
             err = self._errest(idxerr, idxcurr, idxprev)
 
-            maxf = self._maxfac
-            minf = self._minfac
-            saff = self._saffac
-            sord = self._stepper_order
-
-            expa = self._alpha / self._stepper_order
-            expb = self._beta / self._stepper_order
-
             # Determine time step adjustment factor
-            fac = err**-expa*self._errprev**expb
+            fac = err**-expa * self._errprev**expb
             fac = min(maxf, max(minf, saff*fac))
 
             # Compute the size of the next step

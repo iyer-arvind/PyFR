@@ -362,6 +362,7 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
 
     nspts, neles, ndims = m_inf[1]
     nvpts = shapecls.nspts_from_order(args.divisor + 1)
+    print nspts
 
     # Generate basis objects for solution and vtu output
     soln_b = shapecls(nspts, cfg)
@@ -374,7 +375,6 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     # Calculate node locations of vtu elements
     pts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
     pts = pts.reshape(nvpts, -1, ndims)
-
     # Calculate solution at node locations of vtu elements
     sol = np.dot(soln_vtu_op, soln.reshape(s_inf[1][0], -1))
     sol = sol.reshape(nvpts, s_inf[1][1], -1)
@@ -382,9 +382,9 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     # Append dummy z dimension for points in 2-d (required by Paraview)
     if ndims == 2:
         pts = np.append(pts, np.zeros(pts.shape[:-1])[..., None], axis=2)
-
+    pts = pts.swapaxes(0, 1)
     # Write element node locations to file
-    _write_vtk_darray(pts.swapaxes(0, 1), vtuf, dtype)
+    _write_vtk_darray(pts, vtuf, dtype)
 
     # Perform the sub division
     cells = subdvcls.subcells(args.divisor)
@@ -409,7 +409,7 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
 
     # Convert rhou, rhov, [rhow] to u, v, [w] and energy to pressure
     _component_to_physical_soln(sol, cfg.getfloat('constants', 'gamma'))
-
+    print(sol.shape)
     # Write Density, Velocity and Pressure
     _write_vtk_darray(sol[:,0].T, vtuf, dtype)
     _write_vtk_darray(sol[:,1:-1].transpose(2, 0, 1), vtuf, dtype)

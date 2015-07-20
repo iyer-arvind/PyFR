@@ -30,6 +30,10 @@ class BaseSystem(object):
         eles, elemap = self._load_eles(rallocs, mesh, initsoln, nreg)
         backend.commit()
 
+        # Retain the element map; this may be deleted by clients
+        self.ele_map = elemap
+        self.eles = eles
+
         # Get the banks, types, num DOFs and shapes of the elements
         self.ele_banks = list(eles.scal_upts_inb)
         self.ele_types = list(elemap)
@@ -39,6 +43,10 @@ class BaseSystem(object):
         # I/O banks for the elements
         self.eles_scal_upts_inb = eles.scal_upts_inb
         self.eles_scal_upts_outb = eles.scal_upts_outb
+
+        # Save the number of dimensions and field variables
+        self.ndims = eles[0].ndims
+        self.nvars = eles[0].nvars
 
         # Load the interfaces
         int_inters = self._load_int_inters(rallocs, mesh, elemap)
