@@ -2,11 +2,45 @@
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 from collections import OrderedDict
+import itertools as it
 
 from pyfr.inifile import Inifile
 from pyfr.mpiutil import get_comm_rank_root, get_mpi
 from pyfr.nputil import range_eval
 from pyfr.util import proxylist
+
+
+class MergeTimes(object):
+    def __init__(self):
+        self._itr = []
+        self._handlers = []
+        self._nextvals = None
+
+    def append_time_list(self, itr, handler):
+        self._itr.append((itr, handler)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._nextvals is None:
+            self._nextvals = sorted(((next(i), i) for i in self._itr),
+                                    key=lambda x: x[0][0])
+
+        if not self._nextvals:
+            raise StopIteration()
+
+        t = self._nextvals[0][0][0]
+        idx, tobjs = zip(*((idx, obj) for idx, obj in enumerate(self._nextvals)
+                           if obj[0][0] == t))
+        olist, ilist = zip(*(oi for ii, oi in enumerate(self._nextvals)
+                             if ii in idx))
+        self._nextvals = [oi for ii, oi in enumerate(self._nextvals)
+                          if ii not in idx]
+        self._nextvals.extend((next(i), i) for i in ilist)
+        self._nextvals.sort(key=lambda x: x[0][0])
+        print('t', olist)
+        return t, [o[1] for o in olist]
 
 
 class BaseIntegrator(object, metaclass=ABCMeta):
@@ -23,8 +57,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         self.tstart = cfg.getfloat('solver-time-integrator', 't0', 0.0)
 
         # Output times
-        self.tout = sorted(range_eval(cfg.get('soln-output', 'times')))
-        self.tend = self.tout[-1]
+        tout = sorted(range_eval(cfg.get('soln-output', 'times')))
+        self.tend = tout[-1]
 
         # Current time; defaults to tstart unless resuming a simulation
         if initsoln is None or 'stats' not in initsoln:
@@ -34,11 +68,14 @@ class BaseIntegrator(object, metaclass=ABCMeta):
             self.tcurr = stats.getfloat('solver-time-integrator', 'tcurr')
 
             # Cull already written output times
-            self.tout = [t for t in self.tout if t > self.tcurr]
+            tout = [t for t in tout if t > self.tcurr]
 
         # Ensure no time steps are in the past
-        if self.tout[0] < self.tcurr:
+        if tout[0] < self.tcurr:
             raise ValueError('Output times must be in the future')
+
+        self.tout_iter = tout
+        self.tout = MergeTimes(it.product(tout, (self.write_solution,)))
 
         # Determine the amount of temp storage required by thus method
         nreg = self._stepper_nregs
@@ -108,10 +145,13 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         pass
 
     def run(self):
-        for t in self.tout:
+        for t, handlers in self.tout:
             # Advance to time t
             solns = self.advance_to(t)
+            for h in handlers:
+                h(solns)
 
+    def write_solution(self, solns):
             # Map solutions to elements types
             solnmap = OrderedDict(zip(self.system.ele_types, solns))
 

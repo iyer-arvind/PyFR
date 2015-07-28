@@ -46,6 +46,10 @@ class BaseController(BaseIntegrator):
                 # Register as an event handler
                 self.completed_step_handlers.append(plugin)
 
+                # Register the output times if the plugin needs it
+                if plugin.tout:
+                    self.tout.append_time_list(plugin.tout, plugin.write_out)
+
         # Delete the memory-intensive elements map from the system
         del self.system.ele_map
 

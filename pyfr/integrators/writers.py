@@ -41,8 +41,10 @@ class H5Writer(BaseIntegrator):
             for mrank, meleinfo in enumerate(eleinfo):
                 prank = self.rallocs.mprankmap[mrank]
                 for etype, dims in meleinfo:
-                    sollist[etype, prank] = \
-                            (self._get_name_for_soln(etype, prank), dims)
+                    sollist[etype, prank] = (
+                        self._get_name_for_soln(etype, prank),
+                        dims
+                    )
 
         else:
             sollist = None

@@ -17,6 +17,9 @@ class BasePlugin(object, metaclass=ABCMeta):
         self.ndims = intg.system.ndims
         self.nvars = intg.system.nvars
 
+        # No output by default
+        self.tout = None
+
         # Check that we support this particular system
         if not ('*' in self.systems or intg.system.name in self.systems):
             raise RuntimeError('System {0} not supported by plugin {1}'
