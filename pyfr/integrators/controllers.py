@@ -48,7 +48,7 @@ class BaseController(BaseIntegrator):
 
                 # Register the output times if the plugin needs it
                 if plugin.tout:
-                    self.tout.append_time_list(plugin.tout, plugin.write_out)
+                    self.tlist.append(plugin.tout, plugin.write)
 
         # Delete the memory-intensive elements map from the system
         del self.system.ele_map

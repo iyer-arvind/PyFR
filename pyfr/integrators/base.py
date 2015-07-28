@@ -2,7 +2,6 @@
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 from collections import OrderedDict
-import itertools as it
 
 from pyfr.inifile import Inifile
 from pyfr.mpiutil import get_comm_rank_root, get_mpi
@@ -12,35 +11,30 @@ from pyfr.util import proxylist
 
 class MergeTimes(object):
     def __init__(self):
-        self._itr = []
-        self._handlers = []
-        self._nextvals = None
+        self._nextvals = []
 
-    def append_time_list(self, itr, handler):
-        self._itr.append((itr, handler)
+    def append(self, lst, handler):
+        self._nextvals.append((lst.pop(0), lst, handler))
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self._nextvals is None:
-            self._nextvals = sorted(((next(i), i) for i in self._itr),
-                                    key=lambda x: x[0][0])
-
         if not self._nextvals:
             raise StopIteration()
 
-        t = self._nextvals[0][0][0]
-        idx, tobjs = zip(*((idx, obj) for idx, obj in enumerate(self._nextvals)
-                           if obj[0][0] == t))
-        olist, ilist = zip(*(oi for ii, oi in enumerate(self._nextvals)
-                             if ii in idx))
+        t = self._nextvals[0][0]
+        idx, objs = zip(*((idx, obj) for idx, obj in enumerate(self._nextvals)
+                          if obj[0] == t))
+
         self._nextvals = [oi for ii, oi in enumerate(self._nextvals)
                           if ii not in idx]
-        self._nextvals.extend((next(i), i) for i in ilist)
-        self._nextvals.sort(key=lambda x: x[0][0])
-        print('t', olist)
-        return t, [o[1] for o in olist]
+
+        self._nextvals.extend((o[1].pop(0), o[1], o[2]) for o in objs if o[1])
+
+        self._nextvals.sort(key=lambda x: x[0])
+
+        return t, proxylist(o[2] for o in objs)
 
 
 class BaseIntegrator(object, metaclass=ABCMeta):
@@ -57,8 +51,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         self.tstart = cfg.getfloat('solver-time-integrator', 't0', 0.0)
 
         # Output times
-        tout = sorted(range_eval(cfg.get('soln-output', 'times')))
-        self.tend = tout[-1]
+        self.tout = sorted(range_eval(cfg.get('soln-output', 'times')))
+        self.tend = self.tout[-1]
 
         # Current time; defaults to tstart unless resuming a simulation
         if initsoln is None or 'stats' not in initsoln:
@@ -68,14 +62,14 @@ class BaseIntegrator(object, metaclass=ABCMeta):
             self.tcurr = stats.getfloat('solver-time-integrator', 'tcurr')
 
             # Cull already written output times
-            tout = [t for t in tout if t > self.tcurr]
+            self.tout = [t for t in self.tout if t > self.tcurr]
 
         # Ensure no time steps are in the past
-        if tout[0] < self.tcurr:
+        if self.tout[0] < self.tcurr:
             raise ValueError('Output times must be in the future')
 
-        self.tout_iter = tout
-        self.tout = MergeTimes(it.product(tout, (self.write_solution,)))
+        self.tlist = MergeTimes()
+        self.tlist.append(self.tout, self.write_solution)
 
         # Determine the amount of temp storage required by thus method
         nreg = self._stepper_nregs
@@ -121,7 +115,7 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def output(self, solns, stats):
+    def output(self, data):
         pass
 
     @abstractproperty
@@ -145,22 +139,29 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         pass
 
     def run(self):
-        for t, handlers in self.tout:
+        for t, handlers in self.tlist:
             # Advance to time t
             solns = self.advance_to(t)
-            for h in handlers:
-                h(solns)
 
-    def write_solution(self, solns):
-            # Map solutions to elements types
-            solnmap = OrderedDict(zip(self.system.ele_types, solns))
+            self.output(handlers(self, solns))
 
-            # Collect statistics
-            stats = Inifile()
-            self.collect_stats(stats)
+    def write_solution(self, intg, solns):
 
-            # Output
-            self.output(solnmap, stats)
+        # Map solutions to elements types
+        solnmap = OrderedDict(zip(
+            ("soln_{}_p{}".format(e, self.rallocs.prank)
+                for e in self.system.ele_types),
+            solns))
+
+        # Collect statistics
+        stats = Inifile()
+        self.collect_stats(stats)
+
+        metadata = dict(config=self.cfg.tostr(),
+                        stats=stats.tostr(),
+                        mesh_uuid=self._mesh_uuid)
+        # Output
+        return '/', solnmap, metadata
 
     def collect_stats(self, stats):
         stats.set('solver-time-integrator', 'tcurr', self.tcurr)

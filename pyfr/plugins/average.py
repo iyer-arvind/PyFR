@@ -17,7 +17,7 @@ class AveragePlugin(BasePlugin):
         self.nsteps = self.cfg.getint(self.cfgsect, 'nsteps')
         self.writeskip = self.cfg.getint(self.cfgsect, 'writeskip')
 
-        self.tout = iter( i in self.tout)
+        self.tout = intg.tout[::self.writeskip]
 
         self.averages = []
         self.solnprev = None
@@ -25,8 +25,6 @@ class AveragePlugin(BasePlugin):
         self.dtprev = 0
         self.prevwrite = intg.tcurr
         self.avglist = OrderedDict()
-        for (e, p), (name, shape) in intg.sollist.items():
-            self.avglist[e + '_avg', p] = (name + '_avg', shape)
 
     def __call__(self, intg):
         if not self.tout:
@@ -35,32 +33,33 @@ class AveragePlugin(BasePlugin):
         if ((intg.nacptsteps % self.nsteps == 0) or
                 (intg.tcurr >= self.tout[0])):
             # If this is not the first iteration, we can integrate
-            if self.tprev is not None:
+            if self.tprev is None:
+                self.averages = [np.zeros_like(s) for s in intg.soln]
+            else:
                 dt = intg.tcurr - self.tprev
                 for avg, soln in zip(self.averages, self.solnprev):
                     avg += 0.5*(self.dtprev + dt)*soln
 
                 self.dtprev = dt
-                # If its time to write
-                if intg.tcurr >= self.tout[0]:
-                    for avg, soln in zip(self.averages, intg.soln):
-                        avg += 0.5*dt*soln
-                    avgnames = (e + '_avg' for e in intg.system.ele_types)
-                    path = intg._get_output_path().replace(
-                        '.pyfrs', '_avg.pyfrs')
 
-                    avgmap = OrderedDict(zip(avgnames, self.averages))
-                    metadata = {'tstart': str(self.prevwrite),
-                                'tend': str(self.tout[0])}
-
-                    intg._write(path, avgmap, self.avglist, metadata)
-
-                    self.prevwrite = self.tout.pop(0)
-                    if self.writeskip:
-                        self.tout = self.tout[self.writeskip:]
-                    self.dtprev = 0
-                    self.averages = [np.zeros_like(s) for s in intg.soln]
-            else:
-                self.averages = [np.zeros_like(s) for s in intg.soln]
             self.solnprev = intg.soln
             self.tprev = intg.tcurr
+
+    def write(self, intg, solns):
+        dt = intg.tcurr - self.tprev
+        metadata = {}
+        avgmap = {}
+        for avg, soln in zip(self.averages, intg.soln):
+            avg += 0.5*dt*soln
+            avgnames = ('avg_{}_p{}'.format(e, intg.rallocs.prank)
+                        for e in intg.system.ele_types)
+
+            avgmap = OrderedDict(zip(avgnames, self.averages))
+            metadata = {'tstart': str(self.prevwrite),
+                        'tend': str(intg.tcurr)}
+
+            self.prevwrite = intg.tcurr
+            self.dtprev = 0
+
+        self.averages = [np.zeros_like(s) for s in intg.soln]
+        return 'averages', avgmap, metadata
