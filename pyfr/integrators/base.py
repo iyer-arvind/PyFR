@@ -3,38 +3,11 @@
 from abc import ABCMeta, abstractmethod, abstractproperty
 from collections import OrderedDict
 
+import numpy as np
+
 from pyfr.inifile import Inifile
 from pyfr.mpiutil import get_comm_rank_root, get_mpi
-from pyfr.nputil import range_eval
 from pyfr.util import proxylist
-
-
-class MergeTimes(object):
-    def __init__(self):
-        self._nextvals = []
-
-    def append(self, lst, handler):
-        self._nextvals.append((lst.pop(0), lst, handler))
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if not self._nextvals:
-            raise StopIteration()
-
-        t = self._nextvals[0][0]
-        idx, objs = zip(*((idx, obj) for idx, obj in enumerate(self._nextvals)
-                          if obj[0] == t))
-
-        self._nextvals = [oi for ii, oi in enumerate(self._nextvals)
-                          if ii not in idx]
-
-        self._nextvals.extend((o[1].pop(0), o[1], o[2]) for o in objs if o[1])
-
-        self._nextvals.sort(key=lambda x: x[0])
-
-        return t, proxylist(o[2] for o in objs)
 
 
 class BaseIntegrator(object, metaclass=ABCMeta):
@@ -48,11 +21,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
             raise TypeError('Incompatible stepper/controller combination')
 
         # Start time
-        self.tstart = cfg.getfloat('solver-time-integrator', 't0', 0.0)
-
-        # Output times
-        self.tout = sorted(range_eval(cfg.get('soln-output', 'times')))
-        self.tend = self.tout[-1]
+        self.tstart = cfg.getfloat('solver-time-integrator', 'tstart', 0.0)
+        self.tend = cfg.getfloat('solver-time-integrator', 'tend')
 
         # Current time; defaults to tstart unless resuming a simulation
         if initsoln is None or 'stats' not in initsoln:
@@ -61,15 +31,7 @@ class BaseIntegrator(object, metaclass=ABCMeta):
             stats = Inifile(initsoln['stats'])
             self.tcurr = stats.getfloat('solver-time-integrator', 'tcurr')
 
-            # Cull already written output times
-            self.tout = [t for t in self.tout if t > self.tcurr]
-
-        # Ensure no time steps are in the past
-        if self.tout[0] < self.tcurr:
-            raise ValueError('Output times must be in the future')
-
-        self.tlist = MergeTimes()
-        self.tlist.append(self.tout, self.write_solution)
+        self.tlist = [np.array([self.tcurr, self.tend])]
 
         # Determine the amount of temp storage required by thus method
         nreg = self._stepper_nregs
@@ -114,10 +76,6 @@ class BaseIntegrator(object, metaclass=ABCMeta):
     def advance_to(self, t):
         pass
 
-    @abstractmethod
-    def output(self, data):
-        pass
-
     @abstractproperty
     def _controller_needs_errest(self):
         pass
@@ -139,29 +97,11 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         pass
 
     def run(self):
-        for t, handlers in self.tlist:
+        self.completed_step_handlers(self)
+        for t in self.tlist:
+
             # Advance to time t
-            solns = self.advance_to(t)
-
-            self.output(handlers(self, solns))
-
-    def write_solution(self, intg, solns):
-
-        # Map solutions to elements types
-        solnmap = OrderedDict(zip(
-            ("soln_{}_p{}".format(e, self.rallocs.prank)
-                for e in self.system.ele_types),
-            solns))
-
-        # Collect statistics
-        stats = Inifile()
-        self.collect_stats(stats)
-
-        metadata = dict(config=self.cfg.tostr(),
-                        stats=stats.tostr(),
-                        mesh_uuid=self._mesh_uuid)
-        # Output
-        return '/', solnmap, metadata
+            self.advance_to(t)
 
     def collect_stats(self, stats):
         stats.set('solver-time-integrator', 'tcurr', self.tcurr)
