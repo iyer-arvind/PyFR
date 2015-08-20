@@ -1,0 +1,86 @@
+#!/usr/bin/env python
+# state file generated using paraview version 4.2.0
+
+# ----------------------------------------------------------------
+# setup views used in the visualization
+# ----------------------------------------------------------------
+
+#### import the simple module from the paraview
+from paraview.simple import *
+#### disable automatic camera reset on 'Show'
+paraview.simple._DisableFirstRenderCameraReset()
+
+def drawContour(inFile, outFile):
+  
+  # Create a new 'Render View'
+  renderView1 = CreateView('RenderView')
+  renderView1.ViewSize = [1069, 492]
+  renderView1.InteractionMode = '2D'
+  renderView1.CenterOfRotation = [0.5, 0.0, 0.0]
+  renderView1.CameraPosition = [0.5, 0.0, 2.1598758088050105]
+  renderView1.CameraFocalPoint = [0.5, 0.0, 0.0]
+  renderView1.CameraParallelScale = 0.5590169943749475
+  renderView1.Background = [0.32, 0.34, 0.43]
+  
+  # ----------------------------------------------------------------
+  # setup the data processing pipelines
+  # ----------------------------------------------------------------
+  
+  # create a new 'XML Unstructured Grid Reader'
+  osc_mixing_2d_0010000000vtu = XMLUnstructuredGridReader(FileName=[inFile])
+  osc_mixing_2d_0010000000vtu.PointArrayStatus = ['Velocity']
+  
+  # ----------------------------------------------------------------
+  # setup color maps and opacity mapes used in the visualization
+  # note: the Get..() functions create a new object, if needed
+  # ----------------------------------------------------------------
+  
+  # get color transfer function/color map for 'Velocity'
+  velocityLUT = GetColorTransferFunction('Velocity')
+  velocityLUT.RGBPoints = [87.70603942871094, 0.0416724, 0.0, 0.0, 89.89234075958251, 0.208331, 0.0, 0.0, 92.0786420904541, 0.375006, 0.0, 0.0, 94.26494342132568, 0.541665, 0.0, 0.0, 96.45126196933747, 0.708339, 0.0, 0.0, 98.63756330020904, 0.854139, 0.0, 0.0, 100.82386463108062, 0.937484, 0.0390631, 0.0, 103.01016596195221, 1.0, 0.208331, 0.0, 105.1964672928238, 1.0, 0.375006, 0.0, 107.38276862369537, 1.0, 0.541665, 0.0, 109.56906995456696, 1.0, 0.708339, 0.0, 111.75537128543853, 1.0, 0.858808, 0.0312505, 113.94168983345033, 1.0, 0.947387, 0.156252, 116.1279911643219, 1.0, 1.0, 0.312505, 118.31429249519348, 1.0, 1.0, 0.562493, 120.50059382606506, 1.0, 1.0, 0.812497, 122.14031982421875, 1.0, 1.0, 1.0]
+  velocityLUT.LockScalarRange = 1
+  velocityLUT.ColorSpace = 'Lab'
+  velocityLUT.NanColor = [0.498039, 0.0, 0.0]
+  velocityLUT.ScalarRangeInitialized = 1.0
+  velocityLUT.VectorMode = 'Component'
+  
+  # get opacity transfer function/opacity map for 'Velocity'
+  velocityPWF = GetOpacityTransferFunction('Velocity')
+  velocityPWF.Points = [87.70603942871094, 0.0, 0.5, 0.0, 122.14031982421875, 1.0, 0.5, 0.0]
+  velocityPWF.ScalarRangeInitialized = 1
+  
+  # ----------------------------------------------------------------
+  # setup the visualization in view 'renderView1'
+  # ----------------------------------------------------------------
+  
+  # show data from osc_mixing_2d_0010000000vtu
+  osc_mixing_2d_0010000000vtuDisplay = Show(osc_mixing_2d_0010000000vtu, renderView1)
+  # trace defaults for the display properties.
+  osc_mixing_2d_0010000000vtuDisplay.ColorArrayName = ['POINTS', 'Velocity']
+  osc_mixing_2d_0010000000vtuDisplay.LookupTable = velocityLUT
+  osc_mixing_2d_0010000000vtuDisplay.ScalarOpacityUnitDistance = 0.06231308865191284
+  
+  # show color legend
+  osc_mixing_2d_0010000000vtuDisplay.SetScalarBarVisibility(renderView1, True)
+  
+  # setup the color legend parameters for each legend in this view
+  
+  # get color legend/bar for velocityLUT in view renderView1
+  velocityLUTColorBar = GetScalarBar(velocityLUT, renderView1)
+  velocityLUTColorBar.Position = [0.2830149812734082, 0.7691547861507129]
+  velocityLUTColorBar.Position2 = [0.4300000000000004, 0.11999999999999988]
+  velocityLUTColorBar.Orientation = 'Horizontal'
+  velocityLUTColorBar.Title = 'Velocity'
+  velocityLUTColorBar.ComponentTitle = 'X'
+
+  SaveScreenshot(outFile, magnification=4, quality=100, view=renderView1)
+
+if(__name__=="__main__"):
+    from argparse import ArgumentParser
+    parser=ArgumentParser()
+    parser.add_argument('-i',"--input",required=True,dest="inpFile",type=str)
+    parser.add_argument('-o',"--output",required=True,dest="outFile",type=str)
+
+    args=parser.parse_args()
+    drawContour(args.inpFile,args.outFile)
+
