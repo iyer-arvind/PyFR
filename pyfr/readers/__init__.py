@@ -2,6 +2,7 @@
 
 from pyfr.readers.base import BaseReader
 from pyfr.readers.gmsh import GmshReader
+from pyfr.readers.hopr import HOPRReader
 
 from pyfr.util import subclasses, subclass_where
 
