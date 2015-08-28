@@ -46,7 +46,7 @@ class BaseController(BaseIntegrator):
                 self.completed_step_handlers.append(plugin)
 
         # Delete the memory-intensive elements map from the system
-        del self._system.ele_map
+        del self.system.ele_map
 
     def _accept_step(self, dt, idxcurr):
         self.tcurr += dt
@@ -57,7 +57,7 @@ class BaseController(BaseIntegrator):
 
         # Filter
         if self._ffreq and self.nacptsteps % self._ffreq == 0:
-            self._system.filt(idxcurr)
+            self.system.filt(idxcurr)
 
         # Invalidate the solution cache
         self._curr_soln = None
@@ -82,7 +82,7 @@ class BaseController(BaseIntegrator):
     def soln(self):
         # If we do not have the solution cached then fetch it
         if not self._curr_soln:
-            self._curr_soln = self._system.ele_scal_upts(self._idxcurr)
+            self._curr_soln = self.system.ele_scal_upts(self._idxcurr)
 
         return self._curr_soln
 

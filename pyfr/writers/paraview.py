@@ -70,7 +70,7 @@ def _write_vtk_darray(array, vtuf, numtyp):
     array.tofile(vtuf)
 
 
-def _component_to_physical_soln(soln, gamma):
+def component_to_physical_soln(soln, gamma):
     """Convert PyFR solution of rho, rho(u, v, [w]), E to rho, u, v, [w], p
 
     :param soln: PyFR solution array to be converted.
@@ -408,7 +408,7 @@ def _write_vtu_data(args, vtuf, cfg, mesh, m_inf, soln, s_inf):
     _write_vtk_darray(vtu_typ, vtuf, 'uint8')
 
     # Convert rhou, rhov, [rhow] to u, v, [w] and energy to pressure
-    _component_to_physical_soln(sol, cfg.getfloat('constants', 'gamma'))
+    component_to_physical_soln(sol, cfg.getfloat('constants', 'gamma'))
     print(sol.shape)
     # Write Density, Velocity and Pressure
     _write_vtk_darray(sol[:,0].T, vtuf, dtype)

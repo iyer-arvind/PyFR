@@ -15,8 +15,8 @@ class BasePlugin(object):
 
         self.suffix = suffix
 
-        self.ndims = intg._system.ndims
-        self.nvars = intg._system.nvars
+        self.ndims = intg.system.ndims
+        self.nvars = intg.system.nvars
 
         # Check that we support this particular system
         if not ('*' in self.systems or intg.system.name in self.systems):

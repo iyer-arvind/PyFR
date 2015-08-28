@@ -35,7 +35,7 @@ class BaseElements(object):
         self.nvars = len(self._privarmap[ndims])
 
         # Instantiate the basis class
-        self._basis = basis = basiscls(nspts, cfg)
+        self.basis = basis = basiscls(nspts, cfg)
 
         # See what kind of projection the basis is using
         self.antialias = basis.antialias
@@ -75,7 +75,7 @@ class BaseElements(object):
             raise ValueError('Invalid constants (x, y, or z) in config file')
 
         # Construct the physical location operator matrix
-        plocop = self._basis.sbasis.nodal_basis_at(self._basis.upts)
+        plocop = self.basis.sbasis.nodal_basis_at(self.basis.upts)
 
         # Apply the operator to the mesh elements and reshape
         plocupts = np.dot(plocop, self.eles.reshape(self.nspts, -1))
@@ -98,10 +98,10 @@ class BaseElements(object):
 
     def set_ics_from_soln(self, solnmat, solncfg):
         # Recreate the existing solution basis
-        solnb = self._basis.__class__(None, solncfg)
+        solnb = self.basis.__class__(None, solncfg)
 
         # Form the interpolation operator
-        interp = solnb.ubasis.nodal_basis_at(self._basis.upts)
+        interp = solnb.ubasis.nodal_basis_at(self.basis.upts)
 
         # Sizes
         nupts, neles, nvars = self.nupts, self.neles, self.nvars
@@ -163,17 +163,17 @@ class BaseElements(object):
 
     @memoize
     def opmat(self, expr):
-        return self._be.const_matrix(self._basis.opmat(expr),
+        return self._be.const_matrix(self.basis.opmat(expr),
                                      tags={expr, 'align'})
 
     @memoize
     def smat_at(self, name):
-        smat = self._get_smats(getattr(self._basis, name))
+        smat = self._get_smats(getattr(self.basis, name))
         return self._be.const_matrix(smat, tags={'align'})
 
     @memoize
     def rcpdjac_at(self, name):
-        _, djac = self._get_smats(getattr(self._basis, name), retdets=True)
+        _, djac = self._get_smats(getattr(self.basis, name), retdets=True)
 
         if np.any(djac < -1e-5):
             raise RuntimeError('Negative mesh Jacobians detected')
@@ -182,7 +182,7 @@ class BaseElements(object):
 
     @memoize
     def ploc_at(self, name):
-        op = self._basis.sbasis.nodal_basis_at(getattr(self._basis, name))
+        op = self.basis.sbasis.nodal_basis_at(getattr(self.basis, name))
 
         ploc = np.dot(op, self.eles.reshape(self.nspts, -1))
         ploc = ploc.reshape(-1, self.neles, self.ndims).swapaxes(1, 2)
@@ -190,12 +190,12 @@ class BaseElements(object):
         return self._be.const_matrix(ploc, tags={'align'})
 
     def _gen_pnorm_fpts(self):
-        smats = self._get_smats(self._basis.fpts).transpose(1, 3, 0, 2)
+        smats = self._get_smats(self.basis.fpts).transpose(1, 3, 0, 2)
 
         # We need to compute |J|*[(J^{-1})^{T}.N] where J is the
         # Jacobian and N is the normal for each fpt.  Using
         # J^{-1} = S/|J| where S are the smats, we have S^{T}.N.
-        pnorm_fpts = np.einsum('ijlk,il->ijk', smats, self._basis.norm_fpts)
+        pnorm_fpts = np.einsum('ijlk,il->ijk', smats, self.basis.norm_fpts)
 
         # Compute the magnitudes of these flux point normals
         mag_pnorm_fpts = np.einsum('...i,...i', pnorm_fpts, pnorm_fpts)
@@ -214,7 +214,7 @@ class BaseElements(object):
         npts = len(pts)
 
         # Form the Jacobian operator
-        jacop = np.rollaxis(self._basis.sbasis.jac_nodal_basis_at(pts), 2)
+        jacop = np.rollaxis(self.basis.sbasis.jac_nodal_basis_at(pts), 2)
 
         # Cast as a matrix multiply and apply to eles
         jac = np.dot(jacop.reshape(-1, nspts), self.eles.reshape(nspts, -1))
