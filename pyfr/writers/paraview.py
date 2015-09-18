@@ -2,11 +2,12 @@
 
 """Converts .pyfr[m, s] files to a Paraview VTK UnstructuredGrid File"""
 
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import os
 
 import numpy as np
 
+from pyfr.mpiutil import get_comm_rank_root, register_finalize_handler
 from pyfr.shapes import BaseShape
 from pyfr.util import subclass_where
 from pyfr.writers import BaseWriter
@@ -22,6 +23,18 @@ class ParaviewWriter(BaseWriter):
 
         self.dtype = np.dtype(args.precision).type
         self.divisor = args.divisor or self.cfg.getint('solver', 'order')
+
+        # Import but do not initialise MPI
+        from mpi4py import MPI
+
+        # Manually initialise MPI
+        MPI.Init()
+        register_finalize_handler()
+        comm, rank, root = get_comm_rank_root()
+
+        nparts = len(self.mesh_inf)
+
+        self.parallel_write = nparts > 1 and comm.size > 1
 
     def _get_npts_ncells_nnodes(self, mk):
         m_inf = self.mesh_inf[mk]
@@ -44,7 +57,8 @@ class ParaviewWriter(BaseWriter):
         dsize = np.dtype(self.dtype).itemsize
 
         ndims = self.ndims
-        vvars = self.elementscls.visvarmap[ndims]
+        vvars = OrderedDict(sorted(self.elementscls.visvarmap[ndims].items(),
+                                   key=lambda t: t[0]))
 
         names = ['', 'connectivity', 'offsets', 'types']
         types = [dtype, 'Int32', 'Int32', 'UInt8']
@@ -68,18 +82,21 @@ class ParaviewWriter(BaseWriter):
             return names, types, comps
 
     def write_out(self):
+        comm, rank, root = get_comm_rank_root()
+
         name, extn = os.path.splitext(self.outf)
         parallel = extn == '.pvtu'
-
         parts = defaultdict(list)
+
         for mk, sk in zip(self.mesh_inf, self.soln_inf):
+            part_num = int(mk.rsplit('_', 1)[1][1:])
+            if self.parallel_write and (part_num % comm.size) != rank:
+                continue
             prt = mk.split('_')[-1]
             pfn = '{0}_{1}.vtu'.format(name, prt) if parallel else self.outf
-
             parts[pfn].append((mk, sk))
 
         write_s_to_fh = lambda s: fh.write(s.encode('utf-8'))
-
         for pfn, misil in parts.items():
             with open(pfn, 'wb') as fh:
                 write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
@@ -104,6 +121,12 @@ class ParaviewWriter(BaseWriter):
                 write_s_to_fh('\n</AppendedData>\n</VTKFile>')
 
         if parallel:
+            if self.parallel_write:
+                parts = comm.gather(tuple(parts.keys()), root=root)
+                if rank != root:
+                    return
+                parts = [j for i in parts for j in i]
+
             with open(self.outf, 'wb') as fh:
                 write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
                               'byte_order="LittleEndian" '
@@ -113,15 +136,15 @@ class ParaviewWriter(BaseWriter):
                 # Header
                 self._write_parallel_header(fh)
 
-                # Constitutent pieces
+                # Constituent pieces
                 for pfn in parts:
                     write_s_to_fh('<Piece Source="{0}"/>\n'
                                   .format(os.path.basename(pfn)))
 
                 write_s_to_fh('</PUnstructuredGrid>\n</VTKFile>\n')
 
-
-    def _write_darray(self, array, vtuf, dtype):
+    @staticmethod
+    def _write_darray(array, vtuf, dtype):
         array = array.astype(dtype)
 
         np.uint32(array.nbytes).tofile(vtuf)
@@ -131,7 +154,7 @@ class ParaviewWriter(BaseWriter):
         names, types, comps, sizes = self._get_array_attrs(mk)
         npts, ncells = self._get_npts_ncells_nnodes(mk)[:2]
 
-        write_s = lambda s: vtuf.write(s.encode('utf-8'))
+        write_s = lambda ss: vtuf.write(ss.encode('utf-8'))
         write_s('<Piece NumberOfPoints="{0}" NumberOfCells="{1}">\n'
                 .format(npts, ncells))
         write_s('<Points>\n')
@@ -160,7 +183,7 @@ class ParaviewWriter(BaseWriter):
     def _write_parallel_header(self, vtuf):
         names, types, comps = self._get_array_attrs()
 
-        write_s = lambda s: vtuf.write(s.encode('utf-8'))
+        write_s = lambda ss: vtuf.write(ss.encode('utf-8'))
         write_s('<PPoints>\n')
 
         # Write vtk DaraArray headers
@@ -235,12 +258,13 @@ class ParaviewWriter(BaseWriter):
         # Primitive and visualisation variable maps
         privarmap = self.elementscls.privarmap[self.ndims]
         visvarmap = self.elementscls.visvarmap[self.ndims]
+        vvars = OrderedDict(sorted(visvarmap.items(), key=lambda t: t[0]))
 
         # Convert from conservative to primitive variables
         vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
 
         # Write out the various fields
-        for vnames in visvarmap.values():
+        for vnames in vvars.values():
             ix = [privarmap.index(vn) for vn in vnames]
 
             self._write_darray(vsol[ix].T, vtuf, self.dtype)
