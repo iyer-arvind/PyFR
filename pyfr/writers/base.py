@@ -40,6 +40,9 @@ class BaseWriter(object):
         # Load the config file
         self.cfg = Inifile(self.soln['config'])
 
+        # Check if user wanted the gradients
+        self.export_gradients = args.gradients
+
         # System and elements classs
         self.systemscls = subclass_where(
             BaseSystem, name=self.cfg.get('solver', 'system')

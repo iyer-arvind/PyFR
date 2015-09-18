@@ -8,6 +8,7 @@ import os
 import numpy as np
 
 from pyfr.mpiutil import get_comm_rank_root, register_finalize_handler
+from pyfr.nputil import block_diag
 from pyfr.shapes import BaseShape
 from pyfr.util import subclass_where
 from pyfr.writers import BaseWriter
@@ -36,6 +37,34 @@ class ParaviewWriter(BaseWriter):
 
         self.parallel_write = nparts > 1 and comm.size > 1
 
+        self.outvarmap = list(self.elementscls.privarmap[self.ndims])
+        self.visvarmap = self.elementscls.visvarmap[self.ndims]
+
+        if self.export_gradients:
+            if self.ndims == 2:
+                self.outvarmap.extend(['rho_x', 'rhou_x', 'rhov_x', 'E_x',
+                                       'rho_y', 'rhou_y', 'rhov_y', 'E_y'])
+
+                self.visvarmap.update({
+                    'grad_density': ['rho_x', 'rho_y'],
+                    'grad_momentum': ['rhou_x', 'rhou_y', 'rhov_x', 'rhov_y'],
+                    'grad_energy': ['E_x', 'E_y']})
+            else:
+                self.outvarmap.extend(['rho_x', 'rhou_x', 'rhov_x', 'rhow_x',
+                                       'E_x', 'rho_y', 'rhou_y', 'rhov_y',
+                                       'rhow_y', 'E_y', 'rho_z', 'rhou_z',
+                                       'rhov_z', 'rhow_z', 'E_z'])
+
+                self.visvarmap.update({'grad_density': ['rho_x', 'rho_y',
+                                                        'rho_z'],
+                                       'grad_momentum': ['rhou_x', 'rhou_y',
+                                                         'rhou_z', 'rhov_x',
+                                                         'rhov_y', 'rhov_z',
+                                                         'rhow_x', 'rhow_y',
+                                                         'rhow_z'],
+                                       'grad_energy': ['E_x', 'E_y', 'E_z']
+                                       })
+
     def _get_npts_ncells_nnodes(self, mk):
         m_inf = self.mesh_inf[mk]
 
@@ -56,9 +85,7 @@ class ParaviewWriter(BaseWriter):
         dtype = 'Float32' if self.dtype == np.float32 else 'Float64'
         dsize = np.dtype(self.dtype).itemsize
 
-        ndims = self.ndims
-        vvars = OrderedDict(sorted(self.elementscls.visvarmap[ndims].items(),
-                                   key=lambda t: t[0]))
+        vvars = OrderedDict(sorted(self.visvarmap.items(), key=lambda t: t[0]))
 
         names = ['', 'connectivity', 'offsets', 'types']
         types = [dtype, 'Int32', 'Int32', 'UInt8']
@@ -97,6 +124,7 @@ class ParaviewWriter(BaseWriter):
             parts[pfn].append((mk, sk))
 
         write_s_to_fh = lambda s: fh.write(s.encode('utf-8'))
+
         for pfn, misil in parts.items():
             with open(pfn, 'wb') as fh:
                 write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
@@ -229,6 +257,48 @@ class ParaviewWriter(BaseWriter):
         vsol = np.dot(soln_vtu_op, soln.reshape(-1, self.nvars*neles))
         vsol = vsol.reshape(nsvpts, self.nvars, -1).swapaxes(0, 1)
 
+        if self.export_gradients:
+            # smats, rjacs
+            ele = self.elementscls(shapecls, mesh, self.cfg)
+
+            smats, djacs = ele._get_smats(soln_b.upts, True)
+            rjacs = 1.0/djacs
+
+            # Dimensions
+            ndims = self.ndims
+            neles = ele.neles
+            nvars = ele.nvars
+            nupts = ele.nupts
+
+            # tgard (ndim, nupts, nvars, neles)
+            tgrad = np.dot(soln_b.opmat('M4'), soln.swapaxes(0, 1)
+                           ).reshape(ndims, nupts, nvars, neles)
+
+            # Eigensum
+            grad = np.einsum('ijkl,kjml,jl->ijml', smats, tgrad, rjacs
+                             ).reshape(ndims*nupts, -1)
+
+            # Interpolate gradient to nodes of vtu elements
+            if self.ndims == 2:
+                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op))
+            else:
+                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op,
+                                          soln_vtu_op))
+
+            vgrd = np.dot(grad_vtu_op, grad)
+
+            # Rearrange the gradient matrix
+            if self.ndims == 2:
+                vgrd = np.concatenate((np.array_split(vgrd, 2)[0],
+                                       np.array_split(vgrd, 2)[1]), axis=1)
+            else:
+                vgrd = np.concatenate((np.array_split(vgrd, 3)[0],
+                                       np.array_split(vgrd, 3)[1],
+                                       np.array_split(vgrd, 3)[2]), axis=1)
+
+            vgrd = vgrd.reshape(nsvpts, self.nvars*self.ndims, -1
+                                ).swapaxes(0, 1)
+
         # Append dummy z dimension for points in 2D
         if self.ndims == 2:
             vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
@@ -256,17 +326,18 @@ class ParaviewWriter(BaseWriter):
         self._write_darray(vtu_typ, vtuf, np.uint8)
 
         # Primitive and visualisation variable maps
-        privarmap = self.elementscls.privarmap[self.ndims]
-        visvarmap = self.elementscls.visvarmap[self.ndims]
-        vvars = OrderedDict(sorted(visvarmap.items(), key=lambda t: t[0]))
+        vvars = OrderedDict(sorted(self.visvarmap.items(), key=lambda t: t[0]))
 
         # Convert from conservative to primitive variables
         vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
 
+        if self.export_gradients:
+            # Concatenate solution and gradient arrays
+            vsol = np.concatenate((vsol, vgrd), axis=0)
+
         # Write out the various fields
         for vnames in vvars.values():
-            ix = [privarmap.index(vn) for vn in vnames]
-
+            ix = [self.outvarmap.index(vn) for vn in vnames]
             self._write_darray(vsol[ix].T, vtuf, self.dtype)
 
 
