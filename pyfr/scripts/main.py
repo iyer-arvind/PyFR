@@ -21,7 +21,7 @@ from pyfr.readers import BaseReader, get_reader_by_name, get_reader_by_extn
 from pyfr.readers.native import read_pyfr_data
 from pyfr.solvers import get_solver
 from pyfr.util import subclasses
-from pyfr.writers import BaseWriter, get_writer_by_name, get_writer_by_extn
+from pyfr.writers import BaseWriter, get_writer_by_extn
 
 
 @mp.workdps(60)
@@ -64,12 +64,12 @@ def main():
                               description='Converts .pyfr[ms] files for '
                               'visualisation in external software.')
     ap_export.add_argument('meshf', help='PyFR mesh file to be converted')
-    ap_export.add_argument('solnf', help='PyFR solution file to be converted')
-    ap_export.add_argument('outf', type=str, help='Output filename')
-    types = [cls.name for cls in subclasses(BaseWriter)]
-    ap_export.add_argument('-t', dest='type', choices=types, required=False,
-                           help='Output file type; this is usually inferred '
-                           'from the extension of outf')
+    ap_export.add_argument('solnf', help='PyFR solution file[s] '
+                           'to be converted', nargs='+')
+    ap_export.add_argument('outd', type=str, help='Output directory')
+    types = [e[1:] for cls in subclasses(BaseWriter) for e in cls.extn]
+    ap_export.add_argument('-t', dest='type', choices=types,
+                           help='Output file type', default='vtu')
     ap_export.add_argument('-d', '--divisor', type=int, default=0,
                            help='Sets the level to which high order elements '
                            'are divided along each edge. The total node count '
@@ -194,15 +194,18 @@ def process_partition(args):
 
 
 def process_export(args):
-    # Get writer instance by specified type or outf extension
-    if args.type:
-        writer = get_writer_by_name(args.type, args)
-    else:
-        extn = os.path.splitext(args.outf)[1]
-        writer = get_writer_by_extn(extn, args)
+    cfg= Inifile(read_pyfr_data(args.solnf[0])['config'])
+    writer = get_writer_by_extn('.' + args.type, args, cfg)
 
-    # Write the output file
-    writer.write_out()
+    for solnf in args.solnf:
+        outfile = '{}/{}.{}'.format(
+            args.outd,
+            os.path.splitext(os.path.basename(solnf))[0],
+            args.type
+        )
+
+        # Write the output file
+        writer.write_out(outfile, read_pyfr_data(solnf))
 
 
 def _process_common(args, mesh, soln, cfg):

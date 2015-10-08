@@ -18,8 +18,8 @@ class ParaviewWriter(BaseWriter):
     name = 'paraview'
     extn = ['.vtu', '.pvtu']
 
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, cfg):
+        super().__init__(args, cfg)
 
         self.dtype = np.dtype(args.precision).type
         self.divisor = args.divisor or self.cfg.getint('solver', 'order')
@@ -35,6 +35,69 @@ class ParaviewWriter(BaseWriter):
         nparts = len(self.mesh_inf)
 
         self.parallel_write = nparts > 1 and comm.size > 1
+        self._process_mesh()
+
+    def _process_mesh(self):
+        comm, rank, root = get_comm_rank_root()
+
+        self.nsvpts = {}
+        self.soln_vtu_op = {}
+        self.vpts = {}
+        self.vtu = {}
+
+        for mk in self.mesh_inf:
+            part_num = int(mk.rsplit('_', 1)[1][1:])
+            if self.parallel_write and (part_num % comm.size) != rank:
+                continue
+            print('Mesh {} on {}'.format(mk, rank))
+            name = self.mesh_inf[mk][0]
+
+            mesh = self.mesh[mk]
+
+            # Dimensions
+            nspts, neles = mesh.shape[:2]
+
+            # Get the shape and sub division classes
+            shapecls = subclass_where(BaseShape, name=name)
+            subdvcls = subclass_where(BaseShapeSubDiv, name=name)
+
+            # Sub division points inside of a standard element
+            svpts = shapecls.std_ele(self.divisor)
+            self.nsvpts[mk] = nsvpts = len(svpts)
+
+            # Shape
+            soln_b = shapecls(nspts, self.cfg)
+
+            # Generate the operator matrices
+            mesh_vtu_op = soln_b.sbasis.nodal_basis_at(svpts)
+            self.soln_vtu_op[mk] = soln_b.ubasis.nodal_basis_at(svpts)
+
+            # Calculate node locations of vtu elements
+            vpts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
+            vpts = vpts.reshape(nsvpts, -1, self.ndims)
+
+
+            # Append dummy z dimension for points in 2D
+            if self.ndims == 2:
+                vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
+
+            self.vpts[mk] = vpts
+
+            # Perform the sub division
+            nodes = subdvcls.subnodes(self.divisor)
+
+            # Prepare vtu cell arrays
+            vtu_con = np.tile(nodes, (neles, 1))
+            vtu_con += (np.arange(neles)*nsvpts)[:, None]
+
+            # Generate offset into the connectivity array
+            vtu_off = np.tile(subdvcls.subcelloffs(self.divisor), (neles, 1))
+            vtu_off += (np.arange(neles)*len(nodes))[:, None]
+
+            # Tile vtu cell type numbers
+            vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
+
+            self.vtu[mk] = (vtu_con, vtu_off, vtu_typ)
 
     def _get_npts_ncells_nnodes(self, mk):
         m_inf = self.mesh_inf[mk]
@@ -81,23 +144,37 @@ class ParaviewWriter(BaseWriter):
         else:
             return names, types, comps
 
-    def write_out(self):
+    def write_out(self, file_name, soln):
         comm, rank, root = get_comm_rank_root()
 
-        name, extn = os.path.splitext(self.outf)
+        # Check solution and mesh are compatible
+        if self.mesh['mesh_uuid'] != soln['mesh_uuid']:
+            raise RuntimeError('Solution was not computed on mesh')
+
+        name, extn = os.path.splitext(file_name)
+
         parallel = extn == '.pvtu'
+        assert not self.parallel_write or parallel, \
+            'Cannot write vtu in parallel'
+
         parts = defaultdict(list)
 
-        for mk, sk in zip(self.mesh_inf, self.soln_inf):
+        soln_inf = soln.array_info
+
+        for mk, sk in zip(self.mesh_inf, soln_inf):
             part_num = int(mk.rsplit('_', 1)[1][1:])
             if self.parallel_write and (part_num % comm.size) != rank:
                 continue
             prt = mk.split('_')[-1]
-            pfn = '{0}_{1}.vtu'.format(name, prt) if parallel else self.outf
+            pfn = '{0}_{1}.vtu'.format(name, prt) if parallel else file_name
+
             parts[pfn].append((mk, sk))
 
         write_s_to_fh = lambda s: fh.write(s.encode('utf-8'))
+
         for pfn, misil in parts.items():
+            print('Soln {} on {}'.format(pfn, rank))
+
             with open(pfn, 'wb') as fh:
                 write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
                               'byte_order="LittleEndian" '
@@ -116,7 +193,7 @@ class ParaviewWriter(BaseWriter):
 
                 # Data
                 for mk, sk in misil:
-                    self._write_data(fh, mk, sk)
+                    self._write_data(fh, mk, soln[sk])
 
                 write_s_to_fh('\n</AppendedData>\n</VTKFile>')
 
@@ -127,7 +204,7 @@ class ParaviewWriter(BaseWriter):
                     return
                 parts = [j for i in parts for j in i]
 
-            with open(self.outf, 'wb') as fh:
+            with open(file_name, 'wb') as fh:
                 write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
                               'byte_order="LittleEndian" '
                               'type="PUnstructuredGrid" '
@@ -198,57 +275,19 @@ class ParaviewWriter(BaseWriter):
 
         write_s('</PPointData>\n')
 
-    def _write_data(self, vtuf, mk, sk):
-        name = self.mesh_inf[mk][0]
-        mesh = self.mesh[mk]
-        soln = self.soln[sk]
+    def _write_data(self, vtuf, mk, soln):
+        nsvpts = self.nsvpts[mk]
+        nvars = soln.shape[1]
+        neles = soln.shape[2]
 
-        # Get the shape and sub division classes
-        shapecls = subclass_where(BaseShape, name=name)
-        subdvcls = subclass_where(BaseShapeSubDiv, name=name)
-
-        # Dimensions
-        nspts, neles = mesh.shape[:2]
-
-        # Sub divison points inside of a standard element
-        svpts = shapecls.std_ele(self.divisor)
-        nsvpts = len(svpts)
-
-        # Shape
-        soln_b = shapecls(nspts, self.cfg)
-
-        # Generate the operator matrices
-        mesh_vtu_op = soln_b.sbasis.nodal_basis_at(svpts)
-        soln_vtu_op = soln_b.ubasis.nodal_basis_at(svpts)
-
-        # Calculate node locations of vtu elements
-        vpts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
-        vpts = vpts.reshape(nsvpts, -1, self.ndims)
+        vtu_con, vtu_off, vtu_typ = self.vtu[mk]
 
         # Calculate solution at node locations of vtu elements
-        vsol = np.dot(soln_vtu_op, soln.reshape(-1, self.nvars*neles))
-        vsol = vsol.reshape(nsvpts, self.nvars, -1).swapaxes(0, 1)
-
-        # Append dummy z dimension for points in 2D
-        if self.ndims == 2:
-            vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
+        vsol = np.dot(self.soln_vtu_op[mk], soln.reshape(-1, nvars*neles))
+        vsol = vsol.reshape(nsvpts, nvars, -1).swapaxes(0, 1)
 
         # Write element node locations to file
-        self._write_darray(vpts.swapaxes(0, 1), vtuf, self.dtype)
-
-        # Perform the sub division
-        nodes = subdvcls.subnodes(self.divisor)
-
-        # Prepare vtu cell arrays
-        vtu_con = np.tile(nodes, (neles, 1))
-        vtu_con += (np.arange(neles)*nsvpts)[:, None]
-
-        # Generate offset into the connectivity array
-        vtu_off = np.tile(subdvcls.subcelloffs(self.divisor), (neles, 1))
-        vtu_off += (np.arange(neles)*len(nodes))[:, None]
-
-        # Tile vtu cell type numbers
-        vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
+        self._write_darray(self.vpts[mk].swapaxes(0, 1), vtuf, self.dtype)
 
         # Write vtu node connectivity, connectivity offsets and cell types
         self._write_darray(vtu_con, vtuf, np.int32)
@@ -301,7 +340,7 @@ class TensorProdShapeSubDiv(BaseShapeSubDiv):
             conbase = np.hstack((conbase, conbase + (1 + n)**2))
 
         # Calculate offset of each subdivided element's nodes
-        nodeoff = np.zeros((n,)*cls.ndim)
+        nodeoff = np.zeros((n,)*cls.ndim, dtype=np.int)
         for dim, off in enumerate(np.ix_(*(range(n),)*cls.ndim)):
             nodeoff += off*(n + 1)**dim
 
