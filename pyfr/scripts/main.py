@@ -66,6 +66,8 @@ def main():
     ap_export.add_argument('meshf', help='PyFR mesh file to be converted')
     ap_export.add_argument('solnf', help='PyFR solution file to be converted')
     ap_export.add_argument('outf', type=str, help='Output filename')
+    ap_export.add_argument('-g', dest='gradients', action='store_true',
+                           help='Export gradients')
     types = [cls.name for cls in subclasses(BaseWriter)]
     ap_export.add_argument('-t', dest='type', choices=types, required=False,
                            help='Output file type; this is usually inferred '
