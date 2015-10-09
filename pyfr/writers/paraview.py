@@ -72,6 +72,7 @@ class ParaviewWriter(BaseWriter):
 
         self.nsvpts = {}
         self.soln_vtu_op = {}
+        self.grad_vtu_op = {}
         self.vpts = {}
         self.vtu = {}
 
@@ -127,6 +128,33 @@ class ParaviewWriter(BaseWriter):
             vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
 
             self.vtu[mk] = (vtu_con, vtu_off, vtu_typ)
+
+            if self.export_gradients:
+                name = self.mesh_inf[mk][0]
+                shapecls = subclass_where(BaseShape, name=name)
+
+                # Shape
+                soln_b = shapecls(nspts, self.cfg)
+                # smats, rjacs
+
+                ele = self.elementscls(shapecls, mesh, self.cfg)
+
+                smats, djacs = ele._get_smats(soln_b.upts, True)
+                rjacs = 1.0/djacs
+
+                soln_vtu_op = self.soln_vtu_op[mk]
+                # Interpolate gradient to nodes of vtu elements
+                if self.ndims == 2:
+                    grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op))
+                else:
+                    grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op,
+                                          soln_vtu_op))
+
+
+                self.grad_vtu_op[mk] = (djacs, rjacs, grad_vtu_op,
+                                        soln_b.opmat('M4'), smats)
+
+
 
     def _get_npts_ncells_nnodes(self, mk):
         m_inf = self.mesh_inf[mk]
@@ -305,8 +333,14 @@ class ParaviewWriter(BaseWriter):
 
     def _write_data(self, vtuf, mk, soln):
         nsvpts = self.nsvpts[mk]
+        nupts = soln.shape[0]
         nvars = soln.shape[1]
         neles = soln.shape[2]
+        ndims = self.ndims
+
+
+        mesh = self.mesh[mk]
+        nspts, neles = mesh.shape[:2]
 
         vtu_con, vtu_off, vtu_typ = self.vtu[mk]
 
@@ -329,45 +363,15 @@ class ParaviewWriter(BaseWriter):
         vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
 
         if self.export_gradients:
-            mesh = self.mesh[mk]
-
-            name = self.mesh_inf[mk][0]
-            nspts, neles = mesh.shape[:2]
-
-            # Dimensions
-            ndims = self.ndims
-
-            shapecls = subclass_where(BaseShape, name=name)
-
-            # Shape
-            soln_b = shapecls(nspts, self.cfg)
-
-            ele = self.elementscls(shapecls, mesh, self.cfg)
-
-            # Dimensions
-            nvars = ele.nvars
-            nupts = ele.nupts
-
-            # smats, rjacs
-            smats, djacs = ele._get_smats(soln_b.upts, True)
-            rjacs = 1.0/djacs
-
+            djacs, rjacs, grad_vtu_op, M4, smats = self.grad_vtu_op[mk]
 
             # tgard (ndim, nupts, nvars, neles)
-            tgrad = np.dot(soln_b.opmat('M4'), soln.swapaxes(0, 1)
+            tgrad = np.dot(M4, soln.swapaxes(0, 1)
                            ).reshape(ndims, nupts, nvars, neles)
 
             # Eigensum
             grad = np.einsum('ijkl,kjml,jl->ijml', smats, tgrad, rjacs
                              ).reshape(ndims*nupts, -1)
-
-            soln_vtu_op = self.soln_vtu_op[mk]
-            # Interpolate gradient to nodes of vtu elements
-            if self.ndims == 2:
-                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op))
-            else:
-                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op,
-                                          soln_vtu_op))
 
             vgrd = np.dot(grad_vtu_op, grad)
 
