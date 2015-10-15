@@ -10,7 +10,7 @@
     fpdtype_t ratio = cs*${2.0/gmo};
 
     fpdtype_t inv = 1.0/ul[0];
-    fpdtype_t V_e = ${' + '.join('({0})*nl[{1}]'.format(c['uvw'[i]], i)
+    fpdtype_t V_e = ${' + '.join('{0}*nl[{1}]'.format(c['uvw'[i]], i)
                                  for i in range(ndims))};
     fpdtype_t V_i = inv*(${' + '.join('ul[{1}]*nl[{0}]'.format(i, i + 1)
                                       for i in range(ndims))});
@@ -34,7 +34,7 @@
 % for i in range(ndims):
     ur[${i + 1}] = (V_i >= 0)
                  ? rho_b*(ul[${i + 1}]*inv + (V_b - V_i)*nl[${i}])
-                 : rho_b*(${v[i]} + (V_b - V_e)*nl[${i}]);
+                 : rho_b*(${c['uvw'[i]]} + (V_b - V_e)*nl[${i}]);
 % endfor
     ur[${nvars - 1}] = p_b*${1.0/gmo}
                      + 0.5*(1.0/ur[0])*${pyfr.dot('ur[{i}]', i=(1, ndims + 1))};
