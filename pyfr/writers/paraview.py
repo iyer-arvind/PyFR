@@ -43,8 +43,7 @@ class ParaviewWriter(BaseWriter):
         dtype = 'Float32' if self.dtype == np.float32 else 'Float64'
         dsize = np.dtype(self.dtype).itemsize
 
-        ndims = self.ndims
-        vvars = self.elementscls.visvarmap[ndims]
+        vvars = self.vvars
 
         names = ['', 'connectivity', 'offsets', 'types']
         types = [dtype, 'Int32', 'Int32', 'UInt8']
@@ -232,11 +231,12 @@ class ParaviewWriter(BaseWriter):
         self._write_darray(vtu_typ, vtuf, np.uint8)
 
         # Primitive and visualisation variable maps
-        privarmap = self.elementscls.privarmap[self.ndims]
-        visvarmap = self.elementscls.visvarmap[self.ndims]
+        privarmap = self.pvars
+        visvarmap = self.vvars
 
         # Convert from conservative to primitive variables
-        vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
+        if self.convert:
+            vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
 
         # Write out the various fields
         for vnames in visvarmap.values():

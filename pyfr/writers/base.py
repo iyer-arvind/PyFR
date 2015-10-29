@@ -45,3 +45,13 @@ class BaseWriter(object):
             BaseSystem, name=self.cfg.get('solver', 'system')
         )
         self.elementscls = self.systemscls.elementscls
+
+        if 'soln-fieldnames' in self.cfg.sections():
+            fields = self.cfg.get('soln-fieldnames', 'field-names').split(',')
+            self.vvars = {f.strip(): [f.strip()] for f in fields}
+            self.pvars = [f.strip() for f in fields]
+            self.convert = False
+        else:
+            self.vvars = self.elementscls.visvarmap[self.ndims]
+            self.pvars = self.elementscls.privarmap[self.ndims]
+            self.convert = True

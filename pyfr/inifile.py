@@ -72,8 +72,8 @@ class Inifile(object):
     def getint(self, section, option, default=_sentinel):
         return int(self.get(section, option, default))
 
-    def items(self, section):
-        return OrderedDict(self._cp.items(section))
+    def items(self, section, raw=False):
+        return OrderedDict(self._cp.items(section, raw=raw))
 
     def items_as(self, section, type):
         iv = []
