@@ -31,6 +31,8 @@ class BaseController(BaseIntegrator):
         self.nrjctsteps = 0
         self.nacptchain = 0
 
+        self.wctime0 = None
+
         # Event handlers for advance_to
         self.completed_step_handlers = proxylist([])
 

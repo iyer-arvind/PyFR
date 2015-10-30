@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import time
+
 from pyfr.integrators.base import BaseIntegrator
 from pyfr.util import memoize, proxylist
 
@@ -25,8 +27,15 @@ class BaseStepper(BaseIntegrator):
     def collect_stats(self, stats):
         super().collect_stats(stats)
 
+        if self.wctime0 is None:
+            self.wctime0 = time.time()
+            dt = 0
+        else:
+            dt = time.time() - self.wctime0
+
         stats.set('solver-time-integrator', 'nsteps', self.nsteps)
         stats.set('solver-time-integrator', 'nfevals', self._stepper_nfevals)
+        stats.set('solver-time-integrator', 'dwctime', dt)
 
     @memoize
     def _get_axnpby_kerns(self, n):
