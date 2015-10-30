@@ -2,6 +2,7 @@
 
 import ast
 import os
+import shelve
 
 import numpy as np
 
@@ -51,9 +52,24 @@ class SamplerPlugin(BasePlugin):
         # Physical location of the solution points
         plocs = [p.swapaxes(1, 2) for p in intg.system.ele_ploc_upts]
 
+        order = self.cfg.getint('solver', 'order')
+        prank = intg.rallocs.prank
+
+        if not os.path.exists('__cache'):
+            os.makedirs('__cache')
+
+        self.cache = shelve.open('__cache/sampler-{}-r{}-p{}'
+                                 .format(intg.mesh_uuid, order, prank))
+
         for p in self.pts:
-            # Find the nearest point in our partition
-            cp = _closest_upt(intg.system.ele_types, plocs, p)
+            key = '{}-{}'.format(tuple(intg.system.ele_types), p)
+
+            if key in self.cache:
+                cp = self.cache[key]
+            else:
+                # Find the nearest point in our partition
+                cp = _closest_upt(intg.system.ele_types, plocs, p)
+                self.cache[key] = cp
 
             # Reduce over all partitions
             mcp, mrank = comm.allreduce(cp, op=get_mpi('minloc'))
@@ -61,6 +77,8 @@ class SamplerPlugin(BasePlugin):
             # Store the rank responsible along with the info
             ptsrank.append(mrank)
             ptsinfo[mrank].append(mcp[1:])
+
+        self.cache.close()
 
         # If we're the root rank then open the output file
         if rank == root:
