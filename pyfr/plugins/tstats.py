@@ -52,8 +52,7 @@ class TStatsPlugin(BasePlugin):
 
         # Accumulate every nsteps and every time the file needs to be written
         if (intg.nacptsteps % self.nsteps == 0) or time_to_write:
-            self.dt_prev = intg.tcurr - self.prev_t
-            self.prev_t = intg.tcurr
+            dt_prev = intg.tcurr - self.prev_t
 
             plocs = intg.system.ele_ploc_upts
             current_soln = [self._process(s, p, intg)
@@ -62,10 +61,10 @@ class TStatsPlugin(BasePlugin):
             if self.prev_soln is not None:
                 for a, c, p in zip(self.accm_soln, current_soln,
                                    self.prev_soln):
-                    a += (c + p) * self.dt_prev
+                    a += (c + p) * dt_prev * 0.5
 
             self.prev_soln = current_soln
-            self.dt_prev = intg.tcurr
+            self.prev_t = intg.tcurr
 
         # Check if it is time to write
         if time_to_write:
