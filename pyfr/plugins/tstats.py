@@ -88,15 +88,23 @@ class TStatsPlugin(BasePlugin):
             self.tout_next += self.dt_out
 
     def _process(self, soln, plocs, intg):
+        # Constants
+        local_vars = self.cfg.items_as('constants', float)
+
+        # The primitives
         elecls = intg.system.elementscls
-        prims = dict(
+        local_vars.update(
             zip(elecls.privarmap[intg.system.ndims],
                 elecls.conv_to_pri(soln.swapaxes(0, 1), self.cfg))
         )
 
-        prims['t'] = intg.tcurr
-        prims.update(dict(zip('xyz'[:self.ndims], plocs.swapaxes(0, 1))))
+        # The current time
+        local_vars['t'] = intg.tcurr
 
-        params = [npeval(p, prims) for p in self.params.values()]
+        # The coordinates
+        local_vars.update(dict(zip('xyz'[:self.ndims], plocs.swapaxes(0, 1))))
+
+        # Evaluate
+        params = [npeval(p, local_vars) for p in self.params.values()]
 
         return np.array(params).swapaxes(0, 1)
