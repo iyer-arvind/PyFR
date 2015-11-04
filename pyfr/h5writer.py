@@ -10,7 +10,7 @@ from pyfr.mpiutil import get_comm_rank_root
 
 
 class H5Writer(object):
-    def __init__(self, intg, basedir, basename, prefix):
+    def __init__(self, intg, basedir, basename, prefix, nvars=None):
         # Base output directory and file name and prefix for the data-set.
         self._basedir = basedir
         self._basename = basename
@@ -27,6 +27,9 @@ class H5Writer(object):
 
         # Get the type and shape of each element in the partition
         etypes, shapes = intg.system.ele_types, intg.system.ele_shapes
+
+        if nvars is not None:
+            shapes = [(s[0], nvars) + s[2:] for s in shapes]
 
         # Gather this information and distribute
         eleinfo = comm.allgather(zip(etypes, shapes))
@@ -100,15 +103,12 @@ class H5Writer(object):
 
     def _write_parallel(self, path, data, metadata):
         comm, rank, root = get_comm_rank_root()
-        nvars = data[0].shape[1]
 
         with h5py.File(path, 'w', driver='mpio', comm=comm) as h5file:
             dmap = {}
             for name, shape in self._global_shape_list:
-                # Number of variables the writer needs to be updated
-                dshape = (shape[0], nvars) + shape[2:]
                 dmap[name] = h5file.create_dataset(
-                    name, dshape, dtype=self.fpdtype
+                    name, shape, dtype=self.fpdtype
                 )
 
             for s, dat in zip(self._loc_names, data):
