@@ -29,7 +29,8 @@ class TStatsPlugin(BasePlugin):
         self.cfg.set('soln-fieldnames', 'field-names',
                      ', '.join(self.params.keys()))
 
-        self._writer = H5Writer(intg, basedir, basename, 'soln')
+        self._writer = H5Writer(intg, basedir, basename, 'soln',
+                                nvars=len(self.params))
 
         self.dt_out = self.cfg.getfloat(cfgsect, 'dt-out')
         self.nsteps = self.cfg.getfloat(cfgsect, 'nsteps')
