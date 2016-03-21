@@ -6,6 +6,7 @@ from collections import defaultdict, OrderedDict
 import os
 
 import numpy as np
+from mpi4py import MPI
 
 from pyfr.mpiutil import get_comm_rank_root, register_finalize_handler
 from pyfr.nputil import block_diag
@@ -65,96 +66,82 @@ class ParaviewWriter(BaseWriter):
                                        'grad_energy': ['E_x', 'E_y', 'E_z']
                                        })
 
-        self._process_mesh()
-
-    def _process_mesh(self):
+    def _process_mesh(self, mk):
         comm, rank, root = get_comm_rank_root()
 
-        self.nsvpts = {}
-        self.soln_vtu_op = {}
-        self.grad_vtu_op = {}
-        self.vpts = {}
-        self.vtu = {}
+        print('Mesh {} on {}'.format(mk, rank))
+        name = self.mesh_inf[mk][0]
 
-        for mk in self.mesh_inf:
-            part_num = int(mk.rsplit('_', 1)[1][1:])
-            if self.parallel_write and (part_num % comm.size) != rank:
-                continue
-            print('Mesh {} on {}'.format(mk, rank))
+        mesh = self.mesh[mk]
+
+        # Dimensions
+        nspts, neles = mesh.shape[:2]
+
+        # Get the shape and sub division classes
+        shapecls = subclass_where(BaseShape, name=name)
+        subdvcls = subclass_where(BaseShapeSubDiv, name=name)
+
+        # Sub division points inside of a standard element
+        svpts = shapecls.std_ele(self.divisor)
+        nsvpts = nsvpts = len(svpts)
+
+        # Shape
+        soln_b = shapecls(nspts, self.cfg)
+
+        # Generate the operator matrices
+        mesh_vtu_op = soln_b.sbasis.nodal_basis_at(svpts)
+        soln_vtu_op = soln_b.ubasis.nodal_basis_at(svpts)
+
+        # Calculate node locations of vtu elements
+        vpts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
+        vpts = vpts.reshape(nsvpts, -1, self.ndims)
+
+        # Append dummy z dimension for points in 2D
+        if self.ndims == 2:
+            vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
+
+        vpts = vpts
+
+        # Perform the sub division
+        nodes = subdvcls.subnodes(self.divisor)
+
+        # Prepare vtu cell arrays
+        vtu_con = np.tile(nodes, (neles, 1))
+        vtu_con += (np.arange(neles)*nsvpts)[:, None]
+
+        # Generate offset into the connectivity array
+        vtu_off = np.tile(subdvcls.subcelloffs(self.divisor), (neles, 1))
+        vtu_off += (np.arange(neles)*len(nodes))[:, None]
+
+        # Tile vtu cell type numbers
+        vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
+
+        vtu = (vtu_con, vtu_off, vtu_typ)
+
+        if self.export_gradients:
             name = self.mesh_inf[mk][0]
-
-            mesh = self.mesh[mk]
-
-            # Dimensions
-            nspts, neles = mesh.shape[:2]
-
-            # Get the shape and sub division classes
             shapecls = subclass_where(BaseShape, name=name)
-            subdvcls = subclass_where(BaseShapeSubDiv, name=name)
-
-            # Sub division points inside of a standard element
-            svpts = shapecls.std_ele(self.divisor)
-            self.nsvpts[mk] = nsvpts = len(svpts)
 
             # Shape
             soln_b = shapecls(nspts, self.cfg)
+            # smats, rjacs
 
-            # Generate the operator matrices
-            mesh_vtu_op = soln_b.sbasis.nodal_basis_at(svpts)
-            self.soln_vtu_op[mk] = soln_b.ubasis.nodal_basis_at(svpts)
+            ele = self.elementscls(shapecls, mesh, self.cfg)
 
-            # Calculate node locations of vtu elements
-            vpts = np.dot(mesh_vtu_op, mesh.reshape(nspts, -1))
-            vpts = vpts.reshape(nsvpts, -1, self.ndims)
+            smats, djacs = ele._get_smats(soln_b.upts, True)
+            rjacs = 1.0/djacs
 
-            # Append dummy z dimension for points in 2D
+            # Interpolate gradient to nodes of vtu elements
             if self.ndims == 2:
-                vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
-
-            self.vpts[mk] = vpts
-
-            # Perform the sub division
-            nodes = subdvcls.subnodes(self.divisor)
-
-            # Prepare vtu cell arrays
-            vtu_con = np.tile(nodes, (neles, 1))
-            vtu_con += (np.arange(neles)*nsvpts)[:, None]
-
-            # Generate offset into the connectivity array
-            vtu_off = np.tile(subdvcls.subcelloffs(self.divisor), (neles, 1))
-            vtu_off += (np.arange(neles)*len(nodes))[:, None]
-
-            # Tile vtu cell type numbers
-            vtu_typ = np.tile(subdvcls.subcelltypes(self.divisor), neles)
-
-            self.vtu[mk] = (vtu_con, vtu_off, vtu_typ)
-
-            if self.export_gradients:
-                name = self.mesh_inf[mk][0]
-                shapecls = subclass_where(BaseShape, name=name)
-
-                # Shape
-                soln_b = shapecls(nspts, self.cfg)
-                # smats, rjacs
-
-                ele = self.elementscls(shapecls, mesh, self.cfg)
-
-                smats, djacs = ele._get_smats(soln_b.upts, True)
-                rjacs = 1.0/djacs
-
-                soln_vtu_op = self.soln_vtu_op[mk]
-                # Interpolate gradient to nodes of vtu elements
-                if self.ndims == 2:
-                    grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op))
-                else:
-                    grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op,
+                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op))
+            else:
+                grad_vtu_op = block_diag((soln_vtu_op, soln_vtu_op,
                                           soln_vtu_op))
 
+            grad_vtu_op = (djacs, rjacs, grad_vtu_op,
+                           soln_b.opmat('M4'), smats)
 
-                self.grad_vtu_op[mk] = (djacs, rjacs, grad_vtu_op,
-                                        soln_b.opmat('M4'), smats)
-
-
+        return nsvpts, vpts, vtu, soln_vtu_op, grad_vtu_op
 
     def _get_npts_ncells_nnodes(self, mk):
         m_inf = self.mesh_inf[mk]
@@ -217,41 +204,57 @@ class ParaviewWriter(BaseWriter):
 
         soln_inf = soln.array_info
 
-        for mk, sk in zip(self.mesh_inf, soln_inf):
-            part_num = int(mk.rsplit('_', 1)[1][1:])
-            if self.parallel_write and (part_num % comm.size) != rank:
-                continue
-            prt = mk.split('_')[-1]
-            pfn = '{0}_{1}.vtu'.format(name, prt) if parallel else file_name
-
-            parts[pfn].append((mk, sk))
-
         write_s_to_fh = lambda s: fh.write(s.encode('utf-8'))
 
-        for pfn, misil in parts.items():
-            print('Soln {} on {}'.format(pfn, rank))
+        if self.parallel_write:
+            if rank == root:
+                for mk, sk in zip(self.mesh_inf, soln_inf):
+                    prt = mk.split('_')[-1]
+                    pfn = '{0}_{1}.vtu'.format(name, prt) if parallel else file_name
+                    parts[pfn].append((mk, sk))
 
-            with open(pfn, 'wb') as fh:
-                write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
-                              'byte_order="LittleEndian" '
-                              'type="UnstructuredGrid" '
-                              'version="0.1">\n<UnstructuredGrid>\n')
+                for pfn, misil in parts.items():
+                        print('ready to issue {}'.format(misil))
+                        d,  = comm.recv(source=MPI.ANY_SOURCE)
+                        print('{} to write {} to {}'.format(d, misil, pfn))
+                        comm.send((pfn, misil), dest=d)
 
-                # Running byte-offset for appended data
-                off = 0
+                for i in range(comm.size - 1):
+                    d,  = comm.recv(source=MPI.ANY_SOURCE)
+                    print('Closing {}', d)
+                    comm.send((None, None), dest=d)
 
-                # Header
-                for mk, sk in misil:
-                    off = self._write_serial_header(fh, mk, off)
+            else:
+                pfn = misil= None
+                while True:
+                    comm.send((rank,), root)
+                    pfn, misil = comm.recv(source=root)
+                    if pfn is None:
+                        break
 
-                write_s_to_fh('</UnstructuredGrid>\n'
-                              '<AppendedData encoding="raw">\n_')
+                    with open(pfn, 'wb') as fh:
+                        write_s_to_fh('<?xml version="1.0" ?>\n<VTKFile '
+                                      'byte_order="LittleEndian" '
+                                      'type="UnstructuredGrid" '
+                                      'version="0.1">\n<UnstructuredGrid>\n')
 
-                # Data
-                for mk, sk in misil:
-                    self._write_data(fh, mk, soln[sk])
+                        # Running byte-offset for appended data
+                        off = 0
 
-                write_s_to_fh('\n</AppendedData>\n</VTKFile>')
+                        # Header
+                        for mk, sk in misil:
+                            off = self._write_serial_header(fh, mk, off)
+
+                        write_s_to_fh('</UnstructuredGrid>\n'
+                                      '<AppendedData encoding="raw">\n_')
+
+                        # Data
+                        for mk, sk in misil:
+                            self._write_data(fh, mk, soln[sk])
+
+                        write_s_to_fh('\n</AppendedData>\n</VTKFile>')
+        else:
+            raise(NotImplementedError('This must be implemented ASAP'))
 
         if parallel:
             if self.parallel_write:
@@ -332,24 +335,24 @@ class ParaviewWriter(BaseWriter):
         write_s('</PPointData>\n')
 
     def _write_data(self, vtuf, mk, soln):
-        nsvpts = self.nsvpts[mk]
         nupts = soln.shape[0]
         nvars = soln.shape[1]
         neles = soln.shape[2]
         ndims = self.ndims
 
+        nsvpts, vpts, vtu, soln_vtu_op, grad_vtu_op = self._process_mesh(mk)
 
         mesh = self.mesh[mk]
         nspts, neles = mesh.shape[:2]
 
-        vtu_con, vtu_off, vtu_typ = self.vtu[mk]
+        vtu_con, vtu_off, vtu_typ = vtu
 
         # Calculate solution at node locations of vtu elements
-        vsol = np.dot(self.soln_vtu_op[mk], soln.reshape(-1, nvars*neles))
+        vsol = np.dot(soln_vtu_op, soln.reshape(-1, nvars*neles))
         vsol = vsol.reshape(nsvpts, nvars, -1).swapaxes(0, 1)
 
         # Write element node locations to file
-        self._write_darray(self.vpts[mk].swapaxes(0, 1), vtuf, self.dtype)
+        self._write_darray(vpts.swapaxes(0, 1), vtuf, self.dtype)
 
         # Write vtu node connectivity, connectivity offsets and cell types
         self._write_darray(vtu_con, vtuf, np.int32)
@@ -363,7 +366,7 @@ class ParaviewWriter(BaseWriter):
         vsol = np.array(self.elementscls.conv_to_pri(vsol, self.cfg))
 
         if self.export_gradients:
-            djacs, rjacs, grad_vtu_op, M4, smats = self.grad_vtu_op[mk]
+            djacs, rjacs, grad_vtu_op, M4, smats = grad_vtu_op
 
             # tgard (ndim, nupts, nvars, neles)
             tgrad = np.dot(M4, soln.swapaxes(0, 1)
