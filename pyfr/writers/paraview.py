@@ -54,7 +54,7 @@ class ParaviewWriter(BaseWriter):
                 self.outvarmap.extend(['rho_x', 'rhou_x', 'rhov_x', 'rhow_x',
                                        'E_x', 'rho_y', 'rhou_y', 'rhov_y',
                                        'rhow_y', 'E_y', 'rho_z', 'rhou_z',
-                                       'rhov_z', 'rhow_z', 'E_z'])
+                                       'rhov_z', 'rhow_z', 'E_z', 'Q'])
 
                 self.visvarmap.update({'grad_density': ['rho_x', 'rho_y',
                                                         'rho_z'],
@@ -63,8 +63,8 @@ class ParaviewWriter(BaseWriter):
                                                          'rhov_y', 'rhov_z',
                                                          'rhow_x', 'rhow_y',
                                                          'rhow_z'],
-                                       'grad_energy': ['E_x', 'E_y', 'E_z']
-                                       })
+                                       'grad_energy': ['E_x', 'E_y', 'E_z'],
+                                       'Q': ['Q']})
 
     def _process_mesh(self, mk):
         comm, rank, root = get_comm_rank_root()
@@ -391,6 +391,19 @@ class ParaviewWriter(BaseWriter):
                                 ).swapaxes(0, 1)
             # Concatenate solution and gradient arrays
             vsol = np.concatenate((vsol, vgrd), axis=0)
+
+            # Generate Q
+            Q = (np.power(((vsol[11,:,:] - vsol[10,:,:]*vsol[1,:,:])/(2*vsol[0,:,:]) - (vsol[7,:,:] - vsol[5,:,:]*vsol[2,:,:])/(2*vsol[0,:,:])),2) -
+                 np.power((vsol[12,:,:] - vsol[10,:,:]*vsol[2,:,:]),2)/(2*np.power(vsol[0,:,:],2)) -
+                 np.power((vsol[18,:,:] - vsol[15,:,:]*vsol[3,:,:]),2)/(2*np.power(vsol[0,:,:],2)) -
+                 np.power((vsol[6,:,:] - vsol[5,:,:]*vsol[1,:,:]),2)/(2*np.power(vsol[0,:,:],2)) -
+                 np.power(((vsol[11,:,:] - vsol[10,:,:]*vsol[1,:,:])/(2*vsol[0,:,:]) + (vsol[7,:,:] - vsol[5,:,:]*vsol[2,:,:])/(2*vsol[0,:,:])),2) +
+                 np.power(((vsol[16,:,:] - vsol[15,:,:]*vsol[1,:,:])/(2*vsol[0,:,:]) - (vsol[8,:,:] - vsol[5,:,:]*vsol[3,:,:])/(2*vsol[0,:,:])),2) -
+                 np.power(((vsol[16,:,:] - vsol[15,:,:]*vsol[1,:,:])/(2*vsol[0,:,:]) + (vsol[8,:,:] - vsol[5,:,:]*vsol[3,:,:])/(2*vsol[0,:,:])),2) +
+                 np.power(((vsol[17,:,:] - vsol[15,:,:]*vsol[2,:,:])/(2*vsol[0,:,:]) - (vsol[13,:,:] - vsol[10,:,:]*vsol[3,:,:])/(2*vsol[0,:,:])),2) -
+                 np.power(((vsol[17,:,:] - vsol[15,:,:]*vsol[2,:,:])/(2*vsol[0,:,:]) + (vsol[13,:,:] - vsol[10,:,:]*vsol[3,:,:])/(2*vsol[0,:,:])),2))
+
+            vsol = np.append(vsol, Q[np.newaxis,:,:], axis=0)
 
         # Write out the various fields
         for vnames in vvars.values():
