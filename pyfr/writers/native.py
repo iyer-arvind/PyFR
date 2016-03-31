@@ -90,7 +90,16 @@ class NativeWriter(object):
 
         # Delegate to _write to do the actual outputting
         t0 = time.time()
-        self._write(path, data, metadata)
+        
+        try:
+            self._write(path, data, metadata)
+
+        except RuntimeError as err:
+
+            comm, rank, root = get_comm_rank_root()
+            with open('{}.{}.failed'.format(path, rank), 'w') as fh:
+                fh.write('{}'.format(err))
+            
         print('Time to write "{}": {}s'.format(path, time.time() - t0))
 
         # Increment the output number
