@@ -4,6 +4,8 @@ import os
 import time
 import pickle
 
+import numpy as np
+
 from pyfr.inifile import Inifile
 from pyfr.plugins.base import BasePlugin
 from pyfr.mpiutil import get_comm_rank_root
@@ -66,6 +68,7 @@ class NPWriterPlugin(BasePlugin):
             time.sleep(1)
 
         for k, v in zip(intg.system.ele_types, intg.soln):
+            print('Writing {}/soln_{}_p{}'.format(dirname, k, rank))
             np.save('{}/soln_{}_p{}'.format(dirname, k, rank), v)
 
         self.tout_next = intg.tcurr + self.dt_out

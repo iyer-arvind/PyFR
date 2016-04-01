@@ -1,0 +1,39 @@
+#!/usr/bin/env python
+
+import os
+import pickle
+import re
+import sys
+import time
+
+import h5py
+import numpy as np
+
+
+
+in_soln = sys.argv[1]
+out_soln = sys.argv[2]
+
+
+
+ofh = h5py.File(out_soln, 'w')
+
+for fn in os.listdir(in_soln):
+    m = re.match(r'soln_(\w+)_p(\d+).npy$', fn)
+    if m:
+        t0 = time.time()
+        print('reading {}'.format(fn))
+        data = np.load('{}/{}'.format(in_soln, fn), mmap_mode='r')
+        print('done {}'.format(time.time() - t0))
+        t0 = time.time()
+        print('writing {}'.format(fn))
+        ofh[fn] = data
+        print('done {}'.format(time.time() - t0))
+    else:
+        assert fn == 'metadata'
+        with open('{}/{}'.format(in_soln, fn), 'rb') as fh:
+            md = pickle.load(fh)
+            for k, v in md.items():
+                ofh[k] = np.array(v, dtype='S')
+
+
