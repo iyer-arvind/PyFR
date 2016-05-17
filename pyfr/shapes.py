@@ -168,6 +168,11 @@ class BaseShape(object):
         rname = self.cfg.get('solver-elements-' + self.name, 'soln-pts')
         return get_quadrule(self.name, rname, self.nupts).pts
 
+    @lazyprop
+    def upts_wts(self):
+        rname = self.cfg.get('solver-elements-' + self.name, 'soln-pts')
+        return get_quadrule(self.name, rname, self.nupts).wts
+
     def _get_qrule(self, eleint, kind, **kwargs):
         sect = 'solver-{0}-{1}'.format(eleint, kind)
 
