@@ -1,0 +1,128 @@
+#!/usr/bin/env python
+
+import os
+import re
+import sys
+from argparse import ArgumentParser
+
+import mpi4py 
+from mpi4py import MPI
+import numpy as np
+import h5py 
+
+from pyfr.inifile import Inifile
+from pyfr.readers.native import NativeReader
+
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+root = 0
+TOL = 1e-5
+
+
+def main(outfn, infl):
+    if rank == root:
+        outf = h5py.File(outfn, 'w')
+        infs = NativeReader(infl[0])
+        stats = Inifile(infs['stats'])
+
+        # create solution list
+        avg_list = []
+        for a in sorted(infs):
+            m = re.match(r'tavg_(\w+)_p(\d+)$', a)
+            if m is None:
+                if a == 'stats':
+                    avgst = avged = None
+                    for inf in infl:
+                      ia = NativeReader(inf)
+                      astats = Inifile(ia['stats'])
+                      ast = astats.getfloat('tavg','tstart')
+                      aed = astats.getfloat('tavg','tend')
+
+                      avgst = ast if avgst is None or ast < avgst else avgst
+                      avged = aed if avged is None or aed > avged else avged
+                              
+                    stats.set('tavg', 'tstart', '{}'.format(avgst))
+                    stats.set('tavg', 'tend', '{}'.format(avged))
+                    outf[a] = stats.tostr()
+
+                else:
+                    outf[a] = infs[a]
+
+            else:
+                avg_list.append(a)
+
+        for i in range(size-1):
+            avg_list.append('STOP')
+
+        for a in avg_list:
+            print('Ready with {}'.format(a))
+            sys.stdout.flush()
+
+            d, avgname, avg  = comm.recv(source=MPI.ANY_SOURCE)
+
+            if avgname:
+                print ('Received average {} from {}'.format(avgname, d))
+          
+            print('Assigning {} to {}'.format(a, d))
+            sys.stdout.flush()
+            comm.send(a, dest=d)
+
+            if avgname:
+                print('Writing {}'.format(avgname))
+                outf[avgname] = avg
+
+        print('Closing')
+        sys.stdout.flush()
+
+
+    else:
+      avgname = None
+      avg = None
+
+      while True:
+        comm.send((rank, avgname, avg), root)
+        avgname = comm.recv(source=root)
+
+        if avgname == 'STOP':
+            print('Stopping rank {}'.format(rank))
+            break
+
+        print('Rank {} working with {}'.format(rank, avgname)) 
+        sys.stdout.flush()
+
+        avg = None
+        for inf in infl:
+            print('Rank {} reading {} avg {}'.format(rank, inf, avgname))
+            sys.stdout.flush()
+
+            infs = h5py.File(inf, 'r')
+            if avg is None:
+                avg = np.array(infs[avgname])
+            else:
+                avg += np.array(infs[avgname])
+
+        avg /= len(infl)
+
+
+if __name__ == '__main__':
+    print('Starting')
+    sys.stdout.flush()
+    parser =ArgumentParser()
+    parser.add_argument('-o', '--output', type=str, required=True,
+                        dest='outfn',help='output file')
+    parser.add_argument('-i', '--input', type=str, required=True,
+                        dest='infnl',nargs='+', help='input files')
+
+    args=parser.parse_args()
+    if os.path.exists(args.outfn):
+        raise ValueError('Output file "{}" exists'.format(args.outfn))
+
+    for i in args.infnl:
+        if not os.path.exists(i):
+            raise ValueError('Input file "{}" does not exist'.format(i))
+    
+    comm.Barrier()
+    main(args.outfn, args.infnl)
+

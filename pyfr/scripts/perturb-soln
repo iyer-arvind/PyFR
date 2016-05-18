@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+import re
+import sys
+import time
+
+import h5py
+import numpy as np
+
+
+in_soln_file = sys.argv[1]
+out_soln_file = sys.argv[2]
+random_scale = float(sys.argv[3])
+
+with h5py.File(in_soln_file,'r') as ifh, h5py.File(out_soln_file,'w') as ofh:
+    for k in ifh:
+        t0 = time.time()
+        m = re.match(r'soln_(\w+)_p(\d+)$', k)
+        print(k)
+        if m:
+            in_s = np.array(ifh[k])
+            print ('read data: {}'.format(time.time() - t0))
+            rho = in_s[:,0,:]
+            rs = (np.random.random(in_s.shape)-0.5) * random_scale
+            rs[:,0,...] *= 0
+            rs[:,1,...] *= rho
+            rs[:,2,...] *= rho
+            rs[:,3,...] *= rho
+            rs[:,4,...] *= 0
+            out_s = in_s + rs 
+            print ('modified data: {}'.format(time.time() - t0))
+            ofh[k] = out_s
+            print ('wrote data: {}'.format(time.time() - t0))
+
+        else:
+            ifh.copy(k, ofh)
+        
+
