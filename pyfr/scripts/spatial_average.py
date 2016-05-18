@@ -198,8 +198,12 @@ class SpatialAverage(object):
         avg_loc = np.array(avg_loc).reshape([-1, 1])
         avg_sol = np.array(avg_sol)
 
+        keys = ['y'] + [
+            k.replace('avg-', '')
+            for k in cfg.items('soln-plugin-tavg') if k.startswith('avg-')
+        ]
         # Return
-        return np.concatenate((avg_loc, avg_sol), axis=1)
+        return keys, np.concatenate((avg_loc, avg_sol), axis=1)
 
 
 def main():
@@ -216,8 +220,8 @@ def main():
 
     args = parser.parse_args()
     averager = SpatialAverage(args.mesh, args.direction)
-    avg = averager.average(args.solution[0])
-    np.savetxt(args.output, avg)
+    keys, avg = averager.average(args.solution[0])
+    np.savetxt(args.output, avg, header=' '.join(keys))
 
 
 if __name__ == '__main__':
