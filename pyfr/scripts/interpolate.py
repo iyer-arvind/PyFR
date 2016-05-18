@@ -5,12 +5,12 @@ from argparse import FileType
 from collections import OrderedDict
 import re
 
-import mpi4py.rc
-mpi4py.rc.initialize = False
+#import mpi4py.rc
+#mpi4py.rc.initialize = False
 
 import h5py
-
 import numpy as np
+from scipy.spatial.ckdtree import cKDTree as KDTree
 
 from pyfr.inifile import Inifile
 from pyfr.progress_bar import ProgressBar
@@ -85,8 +85,8 @@ def inside_tri(x):
 
 
 def inside_tet(x):
-    return (x[0] >= -1 - eps) and (x[1] >= -1 - eps) and (x[2] >= -1 - eps)\
-            and (x[0] + x[1] + x[2]) <= -1 + eps
+    return ((x[0] >= -1 - eps) and (x[1] >= -1 - eps) and (x[2] >= -1 - eps)
+            and (x[0] + x[1] + x[2]) <= -1 + eps)
 
 
 def inside_hex(x):
@@ -109,8 +109,14 @@ inside = dict(quad=inside_quad, tri=inside_tri, tet=inside_tet,
 class PointLocator(object):
     def __init__(self, in_eles):
         self.in_eles = in_eles
+        self._locator = {}
 
-    def __call__(self, xy):
+        for ele_typ in self.in_eles:
+            el_list = np.rollaxis(ele_typ.eles, 1)
+            el_cent = np.average(el_list, 1)
+            self._locator[ele_typ.basis.name] = KDTree(el_cent)
+
+    def __call__(self, xyl):
         in_eles = self.in_eles
         ndims = in_eles[0].ndims
 
@@ -119,79 +125,86 @@ class PointLocator(object):
                           else (0.0, 0.0, 0.0, 1.0))
 
         # Get a list of distances to the element centers to all elements
-        ele_list = list()
+        n_neigh = 20
+        ele_listp = np.zeros((len(in_eles), xyl.shape[0], n_neigh),
+                             dtype=[('d', 'f'), ('idx', 'i'), ('typ', 'U4')])
         ele_map = {}
-        for ele_typ in in_eles:
-            el_list = np.rollaxis(ele_typ.eles, 1)
-            el_cent = np.average(el_list, 1)
-            dv = xy - el_cent
-            d = np.sum(dv**2, 1)
-            eld = np.zeros(d.shape[0],
-                           dtype=[('d', 'f'), ('idx', 'i'),
-                                  ('typ', 'U4')])
 
-            eld['d'] = d
-            eld['idx'] = np.arange(d.shape[0])
-            eld['typ'] = ele_typ.basis.name
-            ele_list.append(eld)
-            ele_map[ele_typ.basis.name] = ele_typ
+        if True:
+            for e, ele_typ in enumerate(in_eles):
+                ele_map[ele_typ.basis.name] = ele_typ
+                d, idx = self._locator[ele_typ.basis.name].query(xyl, n_neigh)
 
-        # Assemble the previous list across types
-        ele_list = np.hstack(ele_list)
+                ele_listp['d'][e] = d
+                ele_listp['idx'][e] = idx
+                ele_listp['typ'][e] = ele_typ.basis.name
 
-        # Sort by distance
-        ele_list = np.sort(ele_list, order=['d'])
+        ele_listp = np.vstack(ele_listp)
 
-        xy = np.hstack([xy, (1, )])
+        ret = []
+        pb = ProgressBar(0, 0, xyl.shape[0])
+        for ii, (ele_list, xy) in enumerate(zip(ele_listp, xyl)):
+            pb.advance_to(ii)
 
-        # Iterate from the closest element with increasing distance
-        for d, idx, typ_name in ele_list[:50]:
-            # Get the element
-            ele_typ = ele_map[typ_name]
-            el = ele_typ.eles[:, idx, :]
+            # Sort by distance
+            ele_list = np.sort(ele_list, order=['d'])
 
-            # Start with a guess that the element is at the origin
-            testp = np.array([-1-eps, eps, eps, 1])
+            xy = np.hstack([xy, (1, )])
 
-            oldp = list()
+            # Iterate from the closest element with increasing distance
+            for d, idx, typ_name in ele_list:
+                # Get the element
+                ele_typ = ele_map[typ_name]
+                el = ele_typ.eles[:, idx, :]
 
-            # We should get to the element within three iteration
-            basis = ele_typ.basis.sbasis
+                # Start with a guess that the element is at the origin
+                testp = np.array([-1-eps, eps, eps, 1])
+                oldp = list()
 
-            for itrn in range(8):
-                trns = np.eye(ndims+1)
-                jac = np.squeeze(basis.jac_nodal_basis_at([testp[:-1]]))
-                # The translation of the element is the translation of
-                # the origin
-                nbs_o = basis.nodal_basis_at([origin[:-1]])
-                trns[:ndims, :ndims] = np.dot(jac, el).T
-                trns[:ndims, ndims] = np.dot(nbs_o, el)
-                newp = np.linalg.solve(trns, xy)
+                basis = ele_typ.basis.sbasis
 
-                # If the new location is close to the previous, abort
-                if np.allclose(testp, newp, 1e-3, 1e-3):
+                # We should get to the element within a few iterations
+                for itrn in range(8):
+                    trns = np.eye(ndims+1)
+                    jac = np.squeeze(basis.jac_nodal_basis_at([testp[:-1]]))
+
+                    # The translation of the element is the translation of
+                    # the origin
+                    nbs_o = basis.nodal_basis_at([origin[:-1]])
+                    trns[:ndims, :ndims] = np.dot(jac, el).T
+                    trns[:ndims, ndims] = np.dot(nbs_o, el)
+
+                    newp = np.linalg.solve(trns, xy)
+
+                    # If the new location is close to the previous, abort
+                    if np.allclose(testp, newp, 1e-8, 1e-8):
+                        break
+
+                    # Else, need to update
+                    oldp.append(testp)
+                    testp = newp
+
+                else:
+                    raise ValueError('Locating iterations did not converge')
+
+                # Check if this point is inside the domain
+                if inside[typ_name](testp):
+                    ret.append((ele_typ, idx, testp))
                     break
-                # Else, need to update
-                oldp.append(testp)
-                testp = newp
-
             else:
-                raise ValueError('Locating iterations did not converge')
+                # Could not find a suitable element
+                raise ValueError(
+                    'Could not locate point {} in domain'.format(xy))
 
-            # Check if this point is inside the domain
-            if inside[typ_name](testp):
-                return ele_typ, idx, testp
-        else:
-            # Could not find a suitable element
-            raise ValueError('Could not locate point {} in domain'.format(xy))
+        return ret
 
 
 def process_interpolate(args):
     # Import MPI
-    from mpi4py import MPI
+    #from mpi4py import MPI
 
     # Manually initialise MPI
-    MPI.Init()
+    #MPI.Init()
 
     # Read the input mesh
     in_mesh = NativeReader(args.inmesh)
@@ -234,11 +247,13 @@ def process_interpolate(args):
 
         coords = plocupts.reshape(oe.nupts*oe.neles, oe.ndims)
         out_soln = np.empty((oe.nupts*oe.neles, oe.nvars))
+
         print('Interpolating to ', oe.basis.name)
         pb = ProgressBar(0, 0, coords.shape[0])
-        for idxp, xy in enumerate(coords):
+
+        for idxp, (xy, (ele_typ, idx, newp)) in \
+                enumerate(zip(coords, locator(coords))):
             pb.advance_to(idxp)
-            ele_typ, idx, newp = locator(xy)
 
             interp = ele_typ.basis.ubasis.nodal_basis_at([newp[:-1]])
             sol = np.dot(interp, ele_typ._scal_upts[:, :, idx])
