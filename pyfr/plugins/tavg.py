@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import threading
+
 import numpy as np
 
 from pyfr.inifile import Inifile
@@ -43,14 +45,17 @@ class TavgPlugin(BasePlugin):
 
         # Time averaging state
         self.prevt = intg.tcurr
-        self.prevex = self._eval_exprs(intg)
+        self.prevex = self._eval_exprs(intg.soln, intg.tcurr)
         self.accmex = [np.zeros_like(p) for p in self.prevex]
 
-    def _eval_exprs(self, intg):
+        self.threading = self.cfg.get(cfgsect, 'threading', 'false') == 'true'
+        self.thread = None
+
+    def _eval_exprs(self, soln, tcurr):
         exprs = []
 
         # Iterate over each element type in the simulation
-        for soln, ploc in zip(intg.soln, self.plocs):
+        for soln, ploc in zip(soln, self.plocs):
             # Get the primitive variable names and solutions
             pnames = self.elementscls.privarmap[self.ndims]
             psolns = self.elementscls.con_to_pri(soln.swapaxes(0, 1),
@@ -58,7 +63,7 @@ class TavgPlugin(BasePlugin):
 
             # Prepare the substitutions dictionary
             ploc = dict(zip('xyz', ploc.swapaxes(0, 1)))
-            subs = dict(zip(pnames, psolns), t=intg.tcurr, **ploc)
+            subs = dict(zip(pnames, psolns), t=tcurr, **ploc)
 
             # Evaluate the expressions
             exprs.append([npeval(v, subs) for k, v in self.exprs])
@@ -66,23 +71,39 @@ class TavgPlugin(BasePlugin):
         # Stack up the expressions for each element type and return
         return [np.dstack(exs).swapaxes(1, 2) for exs in exprs]
 
+    def _run(self, soln, tcurr):
+        # Evaluate the time averaging expressions
+        currex = self._eval_exprs(soln, tcurr)
+
+        # Accumulate them; always do this even when just writing
+        for a, p, c in zip(self.accmex, self.prevex, currex):
+            a += 0.5*(tcurr - self.prevt)*(p + c)
+
+        # Save the time and solution
+        self.prevt = tcurr
+        self.prevex = currex
+
     def __call__(self, intg):
         dowrite = abs(self.tout - intg.tcurr) < self.tol
         doaccum = intg.nacptsteps % self.nsteps == 0
 
         if dowrite or doaccum:
-            # Evaluate the time averaging expressions
-            currex = self._eval_exprs(intg)
+            if self.threading:
+                if self.thread:
+                    self.thread.join()
 
-            # Accumulate them; always do this even when just writing
-            for a, p, c in zip(self.accmex, self.prevex, currex):
-                a += 0.5*(intg.tcurr - self.prevt)*(p + c)
+                self.thread = threading.Thread(None, self._run,
+                    args=(intg.soln, intg.tcurr)
+                )
+                self.thread.start()
 
-            # Save the time and solution
-            self.prevt = intg.tcurr
-            self.prevex = currex
+            else:
+                self._run(intg.soln, intg.tcurr)
 
             if dowrite:
+                if self.threading:
+                    self.thread.join()
+
                 # Normalise
                 accmex = [a / self.dtout for a in self.accmex]
 
