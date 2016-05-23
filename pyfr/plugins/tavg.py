@@ -47,7 +47,6 @@ class TavgPlugin(BasePlugin):
         self.prevt = intg.tcurr
         self.prevex = self._eval_exprs(intg.soln, intg.tcurr)
         self.accmex = [np.zeros_like(p) for p in self.prevex]
-
         self.threading = self.cfg.get(cfgsect, 'threading', 'false') == 'true'
         self.thread = None
 

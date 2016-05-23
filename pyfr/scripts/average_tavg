@@ -19,6 +19,9 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 root = 0
 TOL = 1e-5
+if size == 1:
+    print('Cannot run with a single rank. Have at least 2')
+    sys.exit(1)
 
 
 def main(outfn, infl):
@@ -35,13 +38,13 @@ def main(outfn, infl):
                 if a == 'stats':
                     avgst = avged = None
                     for inf in infl:
-                      ia = NativeReader(inf)
-                      astats = Inifile(ia['stats'])
-                      ast = astats.getfloat('tavg','tstart')
-                      aed = astats.getfloat('tavg','tend')
+                        ia = NativeReader(inf)
+                        astats = Inifile(ia['stats'])
+                        ast = astats.getfloat('tavg','tstart')
+                        aed = astats.getfloat('tavg','tend')
 
-                      avgst = ast if avgst is None or ast < avgst else avgst
-                      avged = aed if avged is None or aed > avged else avged
+                        avgst = ast if avgst is None or ast < avgst else avgst
+                        avged = aed if avged is None or aed > avged else avged
                               
                     stats.set('tavg', 'tstart', '{}'.format(avgst))
                     stats.set('tavg', 'tend', '{}'.format(avged))
@@ -60,10 +63,10 @@ def main(outfn, infl):
             print('Ready with {}'.format(a))
             sys.stdout.flush()
 
-            d, avgname, avg  = comm.recv(source=MPI.ANY_SOURCE)
+            d, avgname, avg = comm.recv(source=MPI.ANY_SOURCE)
 
             if avgname:
-                print ('Received average {} from {}'.format(avgname, d))
+                print('Received average {} from {}'.format(avgname, d))
           
             print('Assigning {} to {}'.format(a, d))
             sys.stdout.flush()
@@ -75,7 +78,6 @@ def main(outfn, infl):
 
         print('Closing')
         sys.stdout.flush()
-
 
     else:
       avgname = None
@@ -109,13 +111,13 @@ def main(outfn, infl):
 if __name__ == '__main__':
     print('Starting')
     sys.stdout.flush()
-    parser =ArgumentParser()
+    parser = ArgumentParser()
     parser.add_argument('-o', '--output', type=str, required=True,
                         dest='outfn',help='output file')
     parser.add_argument('-i', '--input', type=str, required=True,
                         dest='infnl',nargs='+', help='input files')
 
-    args=parser.parse_args()
+    args = parser.parse_args()
     if os.path.exists(args.outfn):
         raise ValueError('Output file "{}" exists'.format(args.outfn))
 
@@ -125,4 +127,3 @@ if __name__ == '__main__':
     
     comm.Barrier()
     main(args.outfn, args.infnl)
-

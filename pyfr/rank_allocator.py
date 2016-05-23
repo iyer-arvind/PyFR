@@ -27,9 +27,9 @@ class BaseRankAllocator(object, metaclass=ABCMeta):
             prankconn = self._get_mesh_connectivity(mesh)
             nparts = len(prankconn) or 1
 
-            if nparts != comm.size:
-                raise RuntimeError('Mesh has %d partitions but running with '
-                                   '%d MPI ranks' % (nparts, comm.size))
+            # if nparts != comm.size:
+            #     raise RuntimeError('Mesh has %d partitions but running with '
+            #                        '%d MPI ranks' % (nparts, comm.size))
         else:
             prankconn = None
 
