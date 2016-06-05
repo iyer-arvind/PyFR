@@ -2,6 +2,7 @@
 
 import itertools as it
 import os
+import threading
 
 import numpy as np
 
@@ -9,7 +10,7 @@ from pyfr.inifile import Inifile
 from pyfr.plugins.base import BasePlugin
 from pyfr.shapes import BaseShape
 from pyfr.util import subclass_where
-from pyfr.nputil import fuzzysort
+from pyfr.nputil import fuzzysort, npeval
 from pyfr.mpiutil import get_comm_rank_root
 
 
@@ -41,6 +42,12 @@ class SpatialAverage(BasePlugin):
         self.basedir = self.cfg.getpath(cfgsect, 'basedir', '.')
         self.basename = self.cfg.get(cfgsect, 'basename')
 
+        # Expressions to time average
+        c = self.cfg.items_as('constants', float)
+        self.exprs = [(k, self.cfg.getexpr(cfgsect, k, subs=c))
+                      for k in self.cfg.items(cfgsect)
+                      if k.startswith('avg-')]
+
         # Append the relevant extension
         if not self.basename.endswith('.csv'):
             self.basename += '.csv'
@@ -50,7 +57,7 @@ class SpatialAverage(BasePlugin):
         # Locations of the shape points  nspts x neles x ndims
         # Roll to have neles x nspts x ndims
         self.spts = np.swapaxes(
-                [a.eles for a in intg.system.ele_map.values()][0], 0, 1)
+            [a.eles for a in intg.system.ele_map.values()][0], 0, 1)
 
         # Number of shape points per element
         n_eles, n_spts, n_dims = self.spts.shape
@@ -70,12 +77,7 @@ class SpatialAverage(BasePlugin):
         cfg.set('solver-elements-line', 'soln-pts',
                 intg.cfg.get('solver-elements-hex', 'soln-pts'))
 
-        # The 2d and 1d basis class
-        l_basiscls = subclass_where(BaseShape, name='line')(
-            {8: 2}[n_spts], cfg
-        )
-
-        p_basiscls = subclass_where(BaseShape, name='quad')
+        self.elementscls = intg.system.elementscls[0]
 
         # The 2d and 1d basis class
         l_basiscls = subclass_where(BaseShape, name='line')(
@@ -108,6 +110,27 @@ class SpatialAverage(BasePlugin):
         self.first_iteration = True
         self.nout = 0
 
+        self.threading = self.cfg.get(cfgsect, 'threading', 'false') == 'true'
+        self.thread = None
+
+    def _eval_exprs(self, soln, tcurr):
+        exprs = []
+
+        # Get the primitive variable names and solutions
+        pnames = self.elementscls.privarmap[self.ndims]
+        psolns = self.elementscls.con_to_pri(soln, self.cfg)
+
+        # Prepare the substitutions dictionary
+        ploc = dict(zip('xyz', self.ploc_upts.swapaxes(0, 1)))
+        subs = dict(zip(pnames, psolns), t=tcurr, **ploc)
+
+        # Evaluate the expressions
+        exprs.append([npeval(v, subs) for k, v in self.exprs])
+
+        # Stack up the expressions for each element type and return
+        # exprs comes as n_vars x n_eles x n_upts
+        return np.dstack(exprs)
+
     def _get_output_path(self, tcurr):
         # Substitute {t} and {n} for the current time and output number
         fname = self.basename.format(t=tcurr, n=self.nout)
@@ -118,8 +141,26 @@ class SpatialAverage(BasePlugin):
         if intg.nacptsteps % self.nsteps != 0:
             return
 
-        soln = np.swapaxes(intg.soln[0], 0, 2)
-        n_eles, n_vars, n_upts = soln.shape
+        # soln comes as n_upts, n_vars, n_eles
+        # getting to n_vars, n_eles, n_upts
+        soln = np.swapaxes(intg.soln[0], 0, 1)
+
+        if self.threading:
+            if self.thread:
+                self.thread.join()
+
+            self.thread = threading.Thread(None, self._run,
+                args=(soln, intg.tcurr)
+            )
+            self.thread.start()
+
+        else:
+            self._run(soln, intg.tcurr)
+
+    def _run(self, soln, tcurr):
+        exprs = self._eval_exprs(soln, tcurr)
+        np.swapaxes(exprs, 0, 1)
+        n_eles, n_vars, n_upts = exprs.shape
 
         line_sol = np.zeros((n_eles, self.n_upts_line, n_vars))
 
@@ -127,7 +168,7 @@ class SpatialAverage(BasePlugin):
             # Set the lineplocs
             line_ploc_upts = np.zeros((n_eles, self.n_upts_line))
 
-        for i, (idx, p, s) in enumerate(zip(self.idx, self.ploc_upts, soln)):
+        for i, (idx, p, s) in enumerate(zip(self.idx, self.ploc_upts, exprs)):
             # Split the arrays after reordering them, now each split
             # has the plocs of the homogeneous direction plane
             # and the homogeneous direction solution.
@@ -176,7 +217,7 @@ class SpatialAverage(BasePlugin):
                  for c, l in self.lists]
             coords, data = zip(*a)
             data = np.hstack((np.array(coords)[:, np.newaxis], data))
-            np.savetxt(self._get_output_path(intg.tcurr), data)
+            np.savetxt(self._get_output_path(tcurr), data)
             self.nout += 1
 
         self.first_iteration = False
