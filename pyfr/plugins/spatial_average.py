@@ -37,7 +37,6 @@ class SpatialAverage(BasePlugin):
     def __init__(self, intg, cfgsect, suffix=None):
         super().__init__(intg, cfgsect, suffix)
         self.directions = self.cfg.get(cfgsect, 'directions')
-        self.nsteps = self.cfg.getint(cfgsect, 'nsteps')
 
         self.basedir = self.cfg.getpath(cfgsect, 'basedir', '.')
         self.basename = self.cfg.get(cfgsect, 'basename')
@@ -51,6 +50,11 @@ class SpatialAverage(BasePlugin):
         # Append the relevant extension
         if not self.basename.endswith('.csv'):
             self.basename += '.csv'
+
+        # Output time step and next output time
+        self.dt_out = self.cfg.getfloat(cfgsect, 'dt-out')
+        self.tout_next = intg.tcurr + self.dt_out
+        intg.call_plugin_dt(self.dt_out)
 
         assert len(intg.system.ele_map) == 1
 
@@ -77,7 +81,7 @@ class SpatialAverage(BasePlugin):
         cfg.set('solver-elements-line', 'soln-pts',
                 intg.cfg.get('solver-elements-hex', 'soln-pts'))
 
-        self.elementscls = intg.system.elementscls[0]
+        self.elementscls = intg.system.elementscls
 
         # The 2d and 1d basis class
         l_basiscls = subclass_where(BaseShape, name='line')(
@@ -110,9 +114,6 @@ class SpatialAverage(BasePlugin):
         self.first_iteration = True
         self.nout = 0
 
-        self.threading = self.cfg.get(cfgsect, 'threading', 'false') == 'true'
-        self.thread = None
-
     def _eval_exprs(self, soln, tcurr):
         exprs = []
 
@@ -138,28 +139,24 @@ class SpatialAverage(BasePlugin):
         return os.path.join(self.basedir, fname)
 
     def __call__(self, intg):
-        if intg.nacptsteps % self.nsteps != 0:
+        if abs(self.tout_next - intg.tcurr) > self.tol:
             return
 
         # soln comes as n_upts, n_vars, n_eles
         # getting to n_vars, n_eles, n_upts
         soln = np.swapaxes(intg.soln[0], 0, 1)
 
-        if self.threading:
-            if self.thread:
-                self.thread.join()
+        self._run(soln, intg.tcurr)
 
-            self.thread = threading.Thread(None, self._run,
-                args=(soln, intg.tcurr)
-            )
-            self.thread.start()
-
-        else:
-            self._run(soln, intg.tcurr)
+        self.tout_next = intg.tcurr + self.dt_out
 
     def _run(self, soln, tcurr):
+        # soln comes as n_vars x n_upts x n_eles
         exprs = self._eval_exprs(soln, tcurr)
-        np.swapaxes(exprs, 0, 1)
+        
+        # exprs comes as n_vars x n_upts x n_eles
+        # convert to n_eles x n_vars x n_upts
+        exprs = np.rollaxis(exprs, 2, 0)
         n_eles, n_vars, n_upts = exprs.shape
 
         line_sol = np.zeros((n_eles, self.n_upts_line, n_vars))
@@ -217,7 +214,8 @@ class SpatialAverage(BasePlugin):
                  for c, l in self.lists]
             coords, data = zip(*a)
             data = np.hstack((np.array(coords)[:, np.newaxis], data))
-            np.savetxt(self._get_output_path(tcurr), data)
+            header = 'y ' + ' '.join([k.replace('avg-','') for k, e in self.exprs])
+            np.savetxt(self._get_output_path(tcurr), data, header=header)
             self.nout += 1
 
         self.first_iteration = False

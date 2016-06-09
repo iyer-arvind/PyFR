@@ -38,7 +38,7 @@ class BasePlugin(object, metaclass=ABCMeta):
         self.nvars = intg.system.nvars
 
         # Tolerance for time comparisons
-        self.tol = 5*intg.dtmin
+        self.tol = 10*intg.dtmin
 
         # Check that we support this particular system
         if not ('*' in self.systems or intg.system.name in self.systems):
