@@ -54,7 +54,9 @@ class SpatialAverage(BasePlugin):
         # Output time step and next output time
         self.dt_out = self.cfg.getfloat(cfgsect, 'dt-out')
         self.tout_next = intg.tcurr + self.dt_out
-        intg.call_plugin_dt(self.dt_out)
+
+        if self.dt_out:
+            intg.call_plugin_dt(self.dt_out)
 
         assert len(intg.system.ele_map) == 1
 
@@ -84,7 +86,7 @@ class SpatialAverage(BasePlugin):
         self.elementscls = intg.system.elementscls
 
         # The 2d and 1d basis class
-        l_basiscls = subclass_where(BaseShape, name='line')(
+        self.line = subclass_where(BaseShape, name='line')(
             {8: 2}[n_spts], cfg
         )
         p_basiscls = subclass_where(BaseShape, name='quad')
@@ -93,7 +95,7 @@ class SpatialAverage(BasePlugin):
         self.plane = p_basiscls({8: 4}[n_spts], cfg)
 
         # The number of solution points in the plane and the line
-        self.n_upts_line = n_upts_line = l_basiscls.upts.shape[0]
+        self.n_upts_line = n_upts_line = self.line.upts.shape[0]
         n_upts_plane = self.plane.upts.shape[0]
 
         n_upts = self.basis.upts.shape[0]
@@ -133,6 +135,7 @@ class SpatialAverage(BasePlugin):
         return np.dstack(exprs)
 
     def _get_output_path(self, tcurr):
+
         # Substitute {t} and {n} for the current time and output number
         fname = self.basename.format(t=tcurr, n=self.nout)
 
@@ -146,11 +149,11 @@ class SpatialAverage(BasePlugin):
         # getting to n_vars, n_eles, n_upts
         soln = np.swapaxes(intg.soln[0], 0, 1)
 
-        self._run(soln, intg.tcurr)
+        self._run(soln, intg.tcurr, True)
 
         self.tout_next = intg.tcurr + self.dt_out
 
-    def _run(self, soln, tcurr):
+    def _run(self, soln, tcurr, write):
         # soln comes as n_vars x n_upts x n_eles
         exprs = self._eval_exprs(soln, tcurr)
         
@@ -208,14 +211,41 @@ class SpatialAverage(BasePlugin):
                     pc = c
 
         line_sols = comm.gather(line_sol.reshape([-1, n_vars]))
+        u_bulk = 0
+
         if rank == root:
             line_sols = np.concatenate(line_sols)
             a = [(c, np.average(line_sols[l, :], axis=0))
                  for c, l in self.lists]
             coords, data = zip(*a)
+
+            if self.first_iteration:
+                n_upts = self.line.upts.shape[0]
+
+                crd = np.array(coords)
+                n_eles = int(crd.shape[0]/self.line.upts.shape[0])
+
+                cent = crd.reshape([n_eles, -1]).mean(axis=1)
+                el_length = (crd - np.repeat(cent, n_upts)
+                             ).reshape([-1, n_upts])[:, 0]/self.line.upts[0]
+
+                self.wts = (np.tile(self.line.upts_wts, n_eles) *
+                            np.repeat(el_length, n_upts))
+
+                self.h = np.dot(np.zeros([n_eles*n_upts])+1, self.wts)
+
+            data = np.array(data)
+            u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
+
+            u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
+
             data = np.hstack((np.array(coords)[:, np.newaxis], data))
-            header = 'y ' + ' '.join([k.replace('avg-','') for k, e in self.exprs])
-            np.savetxt(self._get_output_path(tcurr), data, header=header)
-            self.nout += 1
+            header = 'y ' + ' '.join([k.replace('avg-', '')
+                                      for k, e in self.exprs])
+
+            if write:
+                np.savetxt(self._get_output_path(tcurr), data, header=header)
+                self.nout += 1
 
         self.first_iteration = False
+        return u_bulk

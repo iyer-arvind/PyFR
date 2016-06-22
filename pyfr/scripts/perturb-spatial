@@ -1,0 +1,109 @@
+#!/usr/bin/env python
+
+import re
+
+import h5py
+import numpy as np
+
+from pyfr.readers.native import NativeReader
+from pyfr.writers.native import NativeWriter
+from pyfr.inifile import Inifile
+from pyfr.nputil import npeval
+from pyfr.shapes import BaseShape
+from pyfr.solvers.navstokes import NavierStokesSystem
+from pyfr.util import subclass_where
+
+
+def perturb(mesh_file, insoln, exprs, outsoln):
+    # Load mesh and solution files
+    mesh = NativeReader(mesh_file)
+
+    # Get element types and array shapes
+    mesh_inf = mesh.array_info
+
+    in_f = h5py.File(insoln, 'r')
+    out_f = h5py.File(outsoln, 'w')
+    cfg = in_f['config'].value
+
+    if type(cfg) is not str:
+        cfg = cfg.tostring().decode()
+
+    cfg = Inifile(cfg)
+
+    for m_name in mesh:
+        # Search only for shape points
+        m = re.match('spt_' + r'([a-z]+)_p(\d+)', m_name)
+        if not m:
+            continue
+
+        print(m_name)
+
+        # Get the shape name and the partition
+        shp, part = m.groups()
+        part = int(part)
+
+        # Get the corresponding solution file
+        for s_name in in_f:
+            m = re.match(r'([a-zA-Z_]+)_{}_p{}'.format(shp, part), s_name)
+            if m:
+                break
+
+        else:
+            raise ValueError(
+                'Could not find solution for {}'.format(m_name)
+                )
+
+        # Get the shape pts
+        spts = mesh[m_name]
+
+        # Get the basis cls for the element
+        basiscls = subclass_where(BaseShape, name=shp)
+
+        # We need the ploc_upts to decide the order, this needs the element
+        ele = NavierStokesSystem.elementscls(basiscls, spts, cfg)
+        ploc_upts = ele.ploc_at_np('upts').swapaxes(0, 1)
+
+        # Get the solution
+        sol = np.array(in_f[s_name]).swapaxes(0, 1)
+        print(sol.shape)
+
+        n_dims = ploc_upts.shape[0]
+        # Get the primitive variable names and solutions
+        pnames = ele.privarmap[n_dims]
+        psolns = ele.con_to_pri(sol, cfg)
+
+        # Prepare the substitutions dictionary
+        ploc = dict(zip('xyz', ploc_upts))
+        subs = dict(zip(pnames, psolns), **ploc)
+
+        outsoln = np.zeros_like(sol)
+
+        for i, v in enumerate(exprs):
+            outsoln[i] = sol[i] + npeval(v, subs)
+
+        out_f[s_name] = outsoln.swapaxes(0, 1)
+
+    metadata = {k: in_f[k].value for k in ('config', 'stats', 'mesh_uuid')}
+    for k, v in metadata.items():
+        out_f[k] = v
+
+    out_f.close()
+
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('-m', '--mesh', type=str, required=True,
+                        help='Mesh file')
+
+    parser.add_argument('-i', '--input', type=str, required=True,
+                        help='Input solution file')
+
+    parser.add_argument('-o', '--output', type=str, required=True,
+                        help='Output solution file')
+
+    parser.add_argument('-p', '--perturb', type=str, required=True,
+                        help='perturbation equations separated by;')
+
+    args = parser.parse_args()
+    perturb = perturb(args.mesh, args.input, args.perturb.split(';'),
+                      args.output)

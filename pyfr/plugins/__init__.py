@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from pyfr.plugins.base import BasePlugin
+from pyfr.plugins.bulk_flow_controller import BulkFlowController
 from pyfr.plugins.dtstats import DtStatsPlugin
 from pyfr.plugins.fluidforce import FluidForcePlugin
 from pyfr.plugins.nancheck import NaNCheckPlugin

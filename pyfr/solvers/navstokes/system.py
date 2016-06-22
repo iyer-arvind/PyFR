@@ -23,6 +23,11 @@ class NavierStokesSystem(BaseAdvectionDiffusionSystem):
         self.eles_scal_upts_inb.active = uinbank
         self.eles_scal_upts_outb.active = foutbank
 
+        if self.cfg.hasopt('soln-plugin-bulk_flow_controller', 'corr'):
+            corr = self.cfg.getfloat('soln-plugin-bulk_flow_controller', 'corr')
+        else:
+            corr = 0
+
         q1 << kernels['eles', 'disu']()
         q1 << kernels['mpiint', 'scal_fpts_pack']()
         runall([q1])
@@ -71,8 +76,8 @@ class NavierStokesSystem(BaseAdvectionDiffusionSystem):
         q1 << kernels['eles', 'tdivtconf']()
         if ('eles', 'tdivf_qpts') in kernels:
             q1 << kernels['eles', 'tdivf_qpts']()
-            q1 << kernels['eles', 'negdivconf'](t=t)
+            q1 << kernels['eles', 'negdivconf'](t=t, corr=corr)
             q1 << kernels['eles', 'divf_upts']()
         else:
-            q1 << kernels['eles', 'negdivconf'](t=t)
+            q1 << kernels['eles', 'negdivconf'](t=t, corr=corr)
         runall([q1])
