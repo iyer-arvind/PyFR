@@ -4,11 +4,15 @@ from pyfr.solvers.baseadvec import BaseAdvectionElements
 
 
 class BaseFluidElements(object):
+    formulations = ['std', 'dual']
+
     privarmap = {2: ['rho', 'u', 'v', 'p'],
                  3: ['rho', 'u', 'v', 'w', 'p']}
 
     convarmap = {2: ['rho', 'rhou', 'rhov', 'E'],
                  3: ['rho', 'rhou', 'rhov', 'rhow', 'E']}
+
+    dualcoeffs = convarmap
 
     visvarmap = {
         2: {'density': ['rho'],
@@ -20,7 +24,7 @@ class BaseFluidElements(object):
     }
 
     @staticmethod
-    def pri_to_conv(pris, cfg):
+    def pri_to_con(pris, cfg):
         rho, p = pris[0], pris[-1]
 
         # Multiply velocity components by rho
@@ -33,11 +37,11 @@ class BaseFluidElements(object):
         return [rho] + rhovs + [E]
 
     @staticmethod
-    def conv_to_pri(convs, cfg):
-        rho, E = convs[0], convs[-1]
+    def con_to_pri(cons, cfg):
+        rho, E = cons[0], cons[-1]
 
         # Divide momentum components by rho
-        vs = [rhov/rho for rhov in convs[1:-1]]
+        vs = [rhov/rho for rhov in cons[1:-1]]
 
         # Compute the pressure
         gamma = cfg.getfloat('constants', 'gamma')

@@ -3,7 +3,6 @@
 from pkg_resources import resource_listdir, resource_string
 import re
 
-from mpmath import mp
 import numpy as np
 
 
@@ -21,7 +20,7 @@ class BaseTabulatedQuadRule(object):
                 continue
 
             # Parse the line
-            args = [mp.mpf(f) for f in l.split()]
+            args = [float(f) for f in l.split()]
 
             if len(args) == self.ndim:
                 pts.append(args)
@@ -46,7 +45,11 @@ class BaseTabulatedQuadRule(object):
 class BaseStoredQuadRule(BaseTabulatedQuadRule):
     @classmethod
     def _iter_rules(cls):
-        for path in resource_listdir(__name__, cls.shape):
+        rpaths = getattr(cls, '_rpaths', None)
+        if rpaths is None:
+            cls._rpaths = rpaths = resource_listdir(__name__, cls.shape)
+
+        for path in rpaths:
             m = re.match(r'([a-zA-Z0-9\-~+]+)-n(\d+)'
                          r'(?:-d(\d+))?(?:-([spu]+))?\.txt$', path)
             if m:

@@ -93,6 +93,9 @@ class NativeWriter(object):
         # Increment the output number
         self.nout += 1
 
+        # Return the path
+        return path
+
     def _restore_nout(self):
         nout = 0
 
@@ -102,8 +105,6 @@ class NativeWriter(object):
             bn = re.escape(self.basename)
             bn = re.sub(r'\\{n[^}]*\\}', r'(\s*\d+\s*)', bn)
             bn = re.sub(r'\\{t[^}]*\\}', r'(?:.*?)', bn) + '$'
-
-            print(bn)
 
             for f in os.listdir(self.basedir):
                 m = re.match(bn, f)

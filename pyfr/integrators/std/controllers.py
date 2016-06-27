@@ -1,58 +1,27 @@
 # -*- coding: utf-8 -*-
 
 import math
-import re
 
-from pyfr.integrators.base import BaseIntegrator
+from pyfr.integrators.std.base import BaseStdIntegrator
 from pyfr.mpiutil import get_comm_rank_root, get_mpi
-from pyfr.plugins import get_plugin
 from pyfr.util import memoize, proxylist
 
 
-class BaseController(BaseIntegrator):
+class BaseStdController(BaseStdIntegrator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # Current and minimum time steps
-        self._dt = self.cfg.getfloat('solver-time-integrator', 'dt')
-        self.dtmin = 1.0e-14
 
         # Solution filtering frequency
         self._fnsteps = self.cfg.getint('soln-filter', 'nsteps', '0')
 
-        # Bank index of solution
-        self._idxcurr = 0
+        # Stats on the most recent step
+        self.stepinfo = []
 
-        # Solution cache
-        self._curr_soln = None
-
-        # Accepted and rejected step counters
-        self.nacptsteps = 0
-        self.nrjctsteps = 0
-        self.nacptchain = 0
-
-        # Event handlers for advance_to
-        self.completed_step_handlers = proxylist([])
-
-        # Load any plugins specified in the config file
-        for s in self.cfg.sections():
-            m = re.match('soln-plugin-(.+?)(?:-(.+))?$', s)
-            if m:
-                cfgsect, name, suffix = m.group(0), m.group(1), m.group(2)
-
-                # Instantiate
-                plugin = get_plugin(name, self, cfgsect, suffix)
-
-                # Register as an event handler
-                self.completed_step_handlers.append(plugin)
-
-        # Delete the memory-intensive elements map from the system
-        del self.system.ele_map
-
-    def _accept_step(self, dt, idxcurr):
+    def _accept_step(self, dt, idxcurr, err=None):
         self.tcurr += dt
         self.nacptsteps += 1
         self.nacptchain += 1
+        self.stepinfo.append((dt, 'accept', err))
 
         self._idxcurr = idxcurr
 
@@ -66,12 +35,16 @@ class BaseController(BaseIntegrator):
         # Fire off any event handlers
         self.completed_step_handlers(self)
 
-    def _reject_step(self, dt, idxold):
+        # Clear the step info
+        self.stepinfo = []
+
+    def _reject_step(self, dt, idxold, err=None):
         if dt <= self.dtmin:
             raise RuntimeError('Minimum sized time step rejected')
 
         self.nacptchain = 0
         self.nrjctsteps += 1
+        self.stepinfo.append((dt, 'reject', err))
 
         self._idxcurr = idxold
 
@@ -79,16 +52,8 @@ class BaseController(BaseIntegrator):
     def nsteps(self):
         return self.nacptsteps + self.nrjctsteps
 
-    @property
-    def soln(self):
-        # If we do not have the solution cached then fetch it
-        if not self._curr_soln:
-            self._curr_soln = self.system.ele_scal_upts(self._idxcurr)
 
-        return self._curr_soln
-
-
-class NoneController(BaseController):
+class StdNoneController(BaseStdController):
     controller_name = 'none'
 
     @property
@@ -110,7 +75,7 @@ class NoneController(BaseController):
             self._accept_step(dt, idxcurr)
 
 
-class PIController(BaseController):
+class StdPIController(BaseStdController):
     controller_name = 'pi'
 
     def __init__(self, *args, **kwargs):
@@ -122,12 +87,17 @@ class PIController(BaseController):
         self._atol = self.cfg.getfloat(sect, 'atol')
         self._rtol = self.cfg.getfloat(sect, 'rtol')
 
+        # Error norm
+        self._norm = self.cfg.get(sect, 'errest-norm', 'l2')
+        if self._norm not in {'l2', 'uniform'}:
+            raise ValueError('Invalid error norm')
+
         # PI control values
         self._alpha = self.cfg.getfloat(sect, 'pi-alpha', 0.7)
         self._beta = self.cfg.getfloat(sect, 'pi-beta', 0.4)
 
         # Estimate of previous error
-        self._errprev = 0.0
+        self._errprev = 1.0
 
         # Step size adjustment factors
         self._saffac = self.cfg.getfloat(sect, 'safety-fact', 0.8)
@@ -140,23 +110,33 @@ class PIController(BaseController):
 
     @memoize
     def _get_errest_kerns(self):
-        return self._kernel('errest', nargs=3)
+        return self._get_kernels('errest', nargs=3, norm=self._norm)
 
     def _errest(self, x, y, z):
         comm, rank, root = get_comm_rank_root()
 
         errest = self._get_errest_kerns()
 
-        # Obtain an estimate for the error
+        # Obtain an estimate for the squared error
         self._prepare_reg_banks(x, y, z)
         self._queue % errest(self._atol, self._rtol)
 
-        # Reduce locally (element types) and globally (MPI ranks)
-        rl = sum(errest.retval)
-        rg = comm.allreduce(rl, op=get_mpi('sum'))
+        # L2 norm
+        if self._norm == 'l2':
+            # Reduce locally (element types) and globally (MPI ranks)
+            rl = sum(errest.retval)
+            rg = comm.allreduce(rl, op=get_mpi('sum'))
 
-        # Normalise
-        err = math.sqrt(rg / self._gndofs)
+            # Normalise
+            err = math.sqrt(rg / self._gndofs)
+        # Uniform norm
+        else:
+            # Reduce locally (element types) and globally (MPI ranks)
+            rl = max(errest.retval)
+            rg = comm.allreduce(rl, op=get_mpi('max'))
+
+            # Normalise
+            err = math.sqrt(rg)
 
         return err if not math.isnan(err) else 100
 
@@ -170,8 +150,8 @@ class PIController(BaseController):
         saff = self._saffac
         sord = self._stepper_order
 
-        expa = self._alpha / self._stepper_order
-        expb = self._beta / self._stepper_order
+        expa = self._alpha / sord
+        expb = self._beta / sord
 
         while self.tcurr < t:
             # Decide on the time step
@@ -193,6 +173,6 @@ class PIController(BaseController):
             # Decide if to accept or reject the step
             if err < 1.0:
                 self._errprev = err
-                self._accept_step(dt, idxcurr)
+                self._accept_step(dt, idxcurr, err=err)
             else:
-                self._reject_step(dt, idxprev)
+                self._reject_step(dt, idxprev, err=err)

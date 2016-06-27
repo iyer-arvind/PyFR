@@ -53,8 +53,8 @@ class TavgPlugin(BasePlugin):
         for soln, ploc in zip(intg.soln, self.plocs):
             # Get the primitive variable names and solutions
             pnames = self.elementscls.privarmap[self.ndims]
-            psolns = self.elementscls.conv_to_pri(soln.swapaxes(0, 1),
-                                                  self.cfg)
+            psolns = self.elementscls.con_to_pri(soln.swapaxes(0, 1),
+                                                 self.cfg)
 
             # Prepare the substitutions dictionary
             ploc = dict(zip('xyz', ploc.swapaxes(0, 1)))
@@ -67,7 +67,7 @@ class TavgPlugin(BasePlugin):
         return [np.dstack(exs).swapaxes(1, 2) for exs in exprs]
 
     def __call__(self, intg):
-        dowrite = abs(self.tout - intg.tcurr) < intg.dtmin
+        dowrite = abs(self.tout - intg.tcurr) < self.tol
         doaccum = intg.nacptsteps % self.nsteps == 0
 
         if dowrite or doaccum:
@@ -94,7 +94,7 @@ class TavgPlugin(BasePlugin):
                 stats.set('tavg', 'tend', intg.tcurr)
                 intg.collect_stats(stats)
 
-                metadata = dict(config=self.cfg.tostr(),
+                metadata = dict(intg.cfgmeta,
                                 stats=stats.tostr(),
                                 mesh_uuid=intg.mesh_uuid)
 

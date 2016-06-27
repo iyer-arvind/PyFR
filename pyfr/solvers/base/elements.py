@@ -48,23 +48,10 @@ class BaseElements(object, metaclass=ABCMeta):
         self.nqpts = basis.nqpts if haveqpts else None
         self.nfpts = basis.nfpts
         self.nfacefpts = basis.nfacefpts
-
-        # Physical normals at the flux points
-        self._gen_pnorm_fpts()
-
-        # Construct the physical location operator matrix
-        plocop = basis.sbasis.nodal_basis_at(basis.fpts)
-
-        # Apply the operator to the mesh elements and reshape
-        plocfpts = np.dot(plocop, eles.reshape(nspts, -1))
-        self.plocfpts = plocfpts.reshape(self.nfpts, neles, ndims)
-        plocfpts = self.plocfpts.transpose(1, 2, 0).tolist()
-
-        self._srtd_face_fpts = [[fuzzysort(pts, ffpts) for pts in plocfpts]
-                                for ffpts in basis.facefpts]
+        self.nmpts = basis.nmpts
 
     @abstractmethod
-    def pri_to_conv(ics, cfg):
+    def pri_to_con(ics, cfg):
         pass
 
     def set_ics_from_cfg(self):
@@ -86,7 +73,7 @@ class BaseElements(object, metaclass=ABCMeta):
         self._scal_upts = np.empty((self.nupts, self.nvars, self.neles))
 
         # Convert from primitive to conservative form
-        for i, v in enumerate(self.pri_to_conv(ics, self.cfg)):
+        for i, v in enumerate(self.pri_to_con(ics, self.cfg)):
             self._scal_upts[:, i, :] = v
 
     def set_ics_from_soln(self, solnmat, solncfg):
@@ -102,6 +89,24 @@ class BaseElements(object, metaclass=ABCMeta):
         # Apply and reshape
         self._scal_upts = np.dot(interp, solnmat.reshape(solnb.nupts, -1))
         self._scal_upts = self._scal_upts.reshape(nupts, nvars, neles)
+
+    @lazyprop
+    def plocfpts(self):
+        # Construct the physical location operator matrix
+        plocop = self.basis.sbasis.nodal_basis_at(self.basis.fpts)
+
+        # Apply the operator to the mesh elements and reshape
+        plocfpts = np.dot(plocop, self.eles.reshape(self.nspts, -1))
+        plocfpts = plocfpts.reshape(self.nfpts, self.neles, self.ndims)
+
+        return plocfpts
+
+    @lazyprop
+    def _srtd_face_fpts(self):
+        plocfpts = self.plocfpts.transpose(1, 2, 0).tolist()
+
+        return [[fuzzysort(pts, ffpts) for pts in plocfpts]
+                for ffpts in self.basis.facefpts]
 
     @abstractproperty
     def _scratch_bufs(self):
@@ -240,47 +245,87 @@ class BaseElements(object, metaclass=ABCMeta):
         self._norm_pnorm_fpts = pnorm_fpts / mag_pnorm_fpts[..., None]
         self._mag_pnorm_fpts = mag_pnorm_fpts
 
-    def _get_jac_eles_at(self, pts):
-        nspts, neles, ndims = self.nspts, self.neles, self.ndims
-        npts = len(pts)
+    @lazyprop
+    def _norm_pnorm_fpts(self):
+        self._gen_pnorm_fpts()
+        return self._norm_pnorm_fpts
 
-        # Form the Jacobian operator
-        jacop = np.rollaxis(self.basis.sbasis.jac_nodal_basis_at(pts), 2)
-
-        # Cast as a matrix multiply and apply to eles
-        jac = np.dot(jacop.reshape(-1, nspts), self.eles.reshape(nspts, -1))
-
-        # Reshape (npts*ndims, neles*ndims) => (npts, ndims, neles, ndims)
-        jac = jac.reshape(npts, ndims, neles, ndims)
-
-        # Transpose to get (ndims, npts, ndims, neles)
-        return jac.transpose(3, 0, 1, 2)
+    @lazyprop
+    def _mag_pnorm_fpts(self):
+        self._gen_pnorm_fpts()
+        return self._mag_pnorm_fpts
 
     def _get_smats(self, pts, retdets=False):
-        jac = self._get_jac_eles_at(pts)
-        smats = np.empty_like(jac)
+        npts = len(pts)
+        smats_mpts, djacs_mpts = self._smats_djacs_mpts
 
-        if self.ndims == 2:
-            a, b, c, d = jac[0,:,0], jac[0,:,1], jac[1,:,0], jac[1,:,1]
+        # Interpolation matrix to pts
+        m0 = self.basis.mbasis.nodal_basis_at(pts)
 
-            smats[0,:,0], smats[0,:,1] = d, -b
-            smats[1,:,0], smats[1,:,1] = -c, a
+        # Interpolate smats
+        smats = np.array([np.dot(m0, smat) for smat in smats_mpts])
+        smats = smats.reshape(self.ndims, npts, self.ndims, -1)
 
-            if retdets:
-                djacs = a*d - b*c
+        if retdets:
+            return smats, np.dot(m0, djacs_mpts)
         else:
-            # We note that J = [x0, x1, x2]
-            x0, x1, x2 = jac[:,:,0], jac[:,:,1], jac[:,:,2]
+            return smats
 
-            smats[0] = np.cross(x1, x2, axisa=0, axisb=0, axisc=1)
-            smats[1] = np.cross(x2, x0, axisa=0, axisb=0, axisc=1)
-            smats[2] = np.cross(x0, x1, axisa=0, axisb=0, axisc=1)
+    @lazyprop
+    def _smats_djacs_mpts(self):
+        # Metric basis with grid point (q<=p) or pseudo grid points (q>p)
+        mpts = self.basis.mpts
+        mbasis = self.basis.mbasis
 
-            if retdets:
-                # Exploit the fact that det(J) = x0 . (x1 ^ x2)
-                djacs = np.einsum('ij...,ji...->j...', x0, smats[0])
+        # Dimensions, number of elements and number of mpts
+        ndims, neles, nmpts = self.ndims, self.neles, self.nmpts
 
-        return (smats, djacs) if retdets else smats
+        # Physical locations of the pseudo grid points
+        x = self.ploc_at_np('mpts')
+
+        # Jacobian operator at these points
+        jacop = np.rollaxis(mbasis.jac_nodal_basis_at(mpts), 2)
+        jacop = jacop.reshape(-1, nmpts)
+
+        # Cast as a matrix multiply and apply to eles
+        jac = np.dot(jacop, x.reshape(nmpts, -1))
+
+        # Reshape (nmpts*ndims, neles*ndims) => (nmpts, ndims, neles, ndims)
+        jac = jac.reshape(nmpts, ndims, ndims, neles)
+
+        # Transpose to get (ndims, ndims, nmpts, neles)
+        jac = jac.transpose(1, 2, 0, 3)
+
+        smats = np.empty((ndims, nmpts, ndims, neles))
+
+        if ndims == 2:
+            a, b, c, d = jac[0, 0], jac[1, 0], jac[0, 1], jac[1, 1]
+
+            smats[0, :, 0], smats[0, :, 1] = d, -b
+            smats[1, :, 0], smats[1, :, 1] = -c, a
+
+            djacs = a*d - b*c
+        else:
+            dtt = []
+            for dx in jac:
+                # Compute x cross x_(chi)
+                tt = np.cross(x, dx, axisa=1, axisb=0, axisc=1)
+
+                # Jacobian of x cross x_(chi) at the pseudo grid points
+                dt = np.dot(jacop, tt.reshape(nmpts, -1))
+                dt = dt.reshape(nmpts, ndims, ndims, -1).swapaxes(0, 1)
+
+                dtt.append(dt)
+
+            # Kopriva's invariant form of smats; JSC 26(3), 301-327, Eq. (37)
+            smats[0] = 0.5*(dtt[2][1] - dtt[1][2])
+            smats[1] = 0.5*(dtt[0][2] - dtt[2][0])
+            smats[2] = 0.5*(dtt[1][0] - dtt[0][1])
+
+            # Exploit the fact that det(J) = x0 . (x1 ^ x2)
+            djacs = np.einsum('ij...,ji...->j...', jac[0], smats[0])
+
+        return smats.reshape(ndims, nmpts, -1), djacs
 
     def get_mag_pnorms(self, eidx, fidx):
         fpts_idx = self.basis.facefpts[fidx]

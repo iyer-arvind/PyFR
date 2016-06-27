@@ -36,6 +36,11 @@ class CUDABackend(BaseBackend):
         # Take the required alignment to be 128 bytes
         self.alignb = 128
 
+        # Get the MPI runtime type
+        self.mpitype = cfg.get('backend-cuda', 'mpi-type', 'standard')
+        if self.mpitype not in {'standard', 'cuda-aware'}:
+            raise ValueError('Invalid CUDA backend MPI type')
+
         # Some CUDA devices share L1 cache and shared memory; on these
         # devices CUDA allows us to specify a preference between L1
         # cache and shared memory.  For the sake of CUBLAS (which
@@ -44,8 +49,8 @@ class CUDABackend(BaseBackend):
         # PREFER_SHARED.
         context.set_cache_config(cuda.func_cache.PREFER_SHARED)
 
-        from pyfr.backends.cuda import (blasext, cublas, packing, provider,
-                                        types)
+        from pyfr.backends.cuda import (blasext, cublas, gimmik, packing,
+                                        provider, types)
 
         # Register our data types
         self.base_matrix_cls = types.CUDAMatrixBase
@@ -68,6 +73,7 @@ class CUDABackend(BaseBackend):
         kprovs = [provider.CUDAPointwiseKernelProvider,
                   blasext.CUDABlasExtKernels,
                   packing.CUDAPackingKernels,
+                  gimmik.CUDAGiMMiKKernels,
                   cublas.CUDACUBLASKernels]
         self._providers = [k(self) for k in kprovs]
 

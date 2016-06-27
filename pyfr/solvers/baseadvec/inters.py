@@ -21,7 +21,6 @@ class BaseAdvectionIntInters(BaseInters):
 
         # Generate the constant matrices
         self._mag_pnorm_lhs = const_mat(lhs, 'get_mag_pnorms_for_inter')
-        self._mag_pnorm_rhs = const_mat(rhs, 'get_mag_pnorms_for_inter')
         self._norm_pnorm_lhs = const_mat(lhs, 'get_norm_pnorms_for_inter')
 
     def _gen_perm(self, lhs, rhs):
@@ -98,7 +97,7 @@ class BaseAdvectionBCInters(BaseInters):
         else:
             return [npeval(cfg.getexpr(sect, k), cc) for k in opts]
 
-    def _exp_opts(self, opts, lhs, default=None):
+    def _exp_opts(self, opts, lhs, default={}):
         cfg, sect = self.cfg, self.cfgsect
 
         subs = cfg.items('constants')
@@ -107,18 +106,12 @@ class BaseAdvectionBCInters(BaseInters):
 
         exprs = {}
         for k in opts:
-            if default is None:
-                ex = cfg.getexpr(sect, k, subs=subs)
-            elif isinstance(default, dict):
-                ex = cfg.getexpr(sect, k, default.get(k, None), subs=subs)
+            if k in default:
+                exprs[k] = cfg.getexpr(sect, k, default[k], subs=subs)
             else:
-                ex = cfg.getexpr(sect, k, default, subs=subs)
+                exprs[k] = cfg.getexpr(sect, k, subs=subs)
 
-            exprs[k] = ex
+        if any('ploc' in ex for ex in exprs.values()) and not self._ploc:
+            self._ploc = self._const_mat(lhs, 'get_ploc_for_inter')
 
-        if any('ploc' in ex for ex in exprs.values()):
-            plocpts = self._const_mat(lhs, 'get_ploc_for_inter')
-        else:
-            plocpts = None
-
-        return exprs, plocpts
+        return exprs

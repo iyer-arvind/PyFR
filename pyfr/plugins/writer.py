@@ -32,10 +32,10 @@ class WriterPlugin(BasePlugin):
         if not intg.isrestart:
             self(intg)
         else:
-            self.tout_next = intg.tcurr + self.dt_out
+            self.tout_next += self.dt_out
 
     def __call__(self, intg):
-        if abs(self.tout_next - intg.tcurr) > intg.dtmin:
+        if abs(self.tout_next - intg.tcurr) > self.tol:
             return
 
         stats = Inifile()
@@ -43,10 +43,17 @@ class WriterPlugin(BasePlugin):
         stats.set('data', 'prefix', 'soln')
         intg.collect_stats(stats)
 
-        metadata = dict(config=self.cfg.tostr(),
+        # Prepare the metadata
+        metadata = dict(intg.cfgmeta,
                         stats=stats.tostr(),
                         mesh_uuid=intg.mesh_uuid)
 
-        self._writer.write(intg.soln, metadata, intg.tcurr)
+        # Write out the file
+        solnfname = self._writer.write(intg.soln, metadata, intg.tcurr)
 
+        # If a post-action has been registered then invoke it
+        self._invoke_postaction(mesh=intg.system.mesh.fname, soln=solnfname,
+                                t=intg.tcurr)
+
+        # Compute the next output time
         self.tout_next = intg.tcurr + self.dt_out

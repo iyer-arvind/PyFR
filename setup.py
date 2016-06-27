@@ -26,16 +26,19 @@ modules = [
     'pyfr.backends.base',
     'pyfr.backends.cuda',
     'pyfr.backends.cuda.kernels',
+    'pyfr.backends.mic',
+    'pyfr.backends.mic.kernels',
     'pyfr.backends.opencl',
     'pyfr.backends.opencl.kernels',
     'pyfr.backends.openmp',
     'pyfr.backends.openmp.kernels',
     'pyfr.integrators',
+    'pyfr.integrators.dual',
+    'pyfr.integrators.std',
     'pyfr.plugins',
     'pyfr.quadrules',
     'pyfr.readers',
     'pyfr.partitioners',
-    'pyfr.scripts',
     'pyfr.solvers',
     'pyfr.solvers.base',
     'pyfr.solvers.baseadvec',
@@ -60,6 +63,7 @@ tests = [
 # Data
 package_data = {
     'pyfr.backends.cuda.kernels': ['*.mako'],
+    'pyfr.backends.mic.kernels': ['*.mako'],
     'pyfr.backends.opencl.kernels': ['*.mako'],
     'pyfr.backends.openmp.kernels': ['*.mako'],
     'pyfr.quadrules': [
@@ -88,23 +92,23 @@ data_files = [
 
 # Hard dependencies
 install_requires = [
-    'h5py >= 2.4',
+    'h5py >= 2.6',
     'mako >= 1.0.0',
-    'mpi4py >= 1.3',
-    'mpmath >= 0.18',
+    'mpi4py >= 2.0',
     'numpy >= 1.8',
-    'pytools >= 2014.3'
+    'pytools >= 2016.2.1'
 ]
 
 # Soft dependencies
 extras_require = {
-    'cuda': ['pycuda >= 2011.2'],
-    'opencl': ['pyopencl >= 2013.2, != 2015.2, != 2015.2.1']
+    'cuda': ['pycuda >= 2015.1'],
+    'mic': ['pymic >= 0.7'],
+    'opencl': ['pyopencl >= 2015.2.4']
 }
 
 # Scripts
 console_scripts = [
-    'pyfr = pyfr.scripts.main:main'
+    'pyfr = pyfr.__main__:main'
 ]
 
 # Info
