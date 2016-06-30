@@ -20,10 +20,10 @@ def format_hms(delta):
 
 
 class ProgressBar(object):
-    _dispfmt = '{:7.1%} [{}{}>{}] {:.{dps}f}/{:.{dps}f} ela: {} rem: {}'
+    _dispfmt = '{:7.1%} [{}{}>{}] {:.{dps}f}/{:.{dps}f} ela: {} rem: {} nfevals: {} wclocktime: {:5f}'
 
     # Minimum time in seconds between updates
-    _mindelta = 0.1
+    _mindelta = 10
 
     def __init__(self, start, curr, end, dps=2):
         self.ststrt = start
@@ -37,11 +37,12 @@ class ProgressBar(object):
         self._ncol = shutil.get_terminal_size()[0] or 80
         self._nbarcol = self._ncol - 24 - 2*len('{:.{}f}'.format(end, dps))
 
-        self.advance_to(curr)
+        self.advance_to(curr, 0)
 
-    def advance_to(self, t):
+    def advance_to(self, t, nfevals):
         self.stcurr = min(t, self.stend)
         self.stelap = self.stcurr - self.strtrt
+        self.nfevals = nfevals
 
         self._render()
 
@@ -60,14 +61,14 @@ class ProgressBar(object):
         if delta < self._mindelta and self.stcurr != self.stend:
             return
 
-        # Starting, current, elapsed, and ending simulation times
+        # Starting, current, elapsed and ending simulation times
         st, cu, el, en = self.ststrt, self.stcurr, self.stelap, self.stend
 
         # Relative times
         rcu, ren = cu - st,  en - st
 
         # Fraction of the simulation we've completed
-        frac = rcu / ren
+        frac = float(rcu) / ren
 
         # Elapsed and estimated remaining wall time
         wela = format_hms(wallt)
@@ -76,15 +77,15 @@ class ProgressBar(object):
         # Decide how many '+', '=' and ' ' to output for the progress bar
         n = self._nbarcol - len(wela) - len(wrem) - 1
         nps = int(n * (rcu - el)/ren)
-        neq = int(round(n * el/ren))
+        neq = int(n * el/ren)
         nsp = n - nps - neq
 
         # Render the progress bar
         s = self._dispfmt.format(frac, '+'*nps, '='*neq, ' '*nsp, cu, en,
-                                 wela, wrem, dps=self.dps)
+                                 wela, wrem, self.nfevals, wallt , dps=self.dps)
 
         # Write the progress bar and pad the remaining columns
-        sys.stderr.write('\x1b[2K\x1b[G')
+        sys.stderr.write('\n')
         sys.stderr.write(s)
         sys.stderr.flush()
 

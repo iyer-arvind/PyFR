@@ -220,7 +220,7 @@ def _process_common(args, mesh, soln, cfg):
         pb = ProgressBar(solver.tstart, solver.tcurr, solver.tend)
 
         # Register a callback to update the bar after each step
-        callb = lambda intg: pb.advance_to(intg.tcurr)
+        callb = lambda intg: pb.advance_to(intg.tcurr, intg._stepper_nfevals)
         solver.completed_step_handlers.append(callb)
 
     # Execute!
