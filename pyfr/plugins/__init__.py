@@ -8,8 +8,8 @@ from pyfr.plugins.residual import ResidualPlugin
 from pyfr.plugins.sampler import SamplerPlugin
 from pyfr.plugins.tavg import TavgPlugin
 from pyfr.plugins.writer import WriterPlugin
+from pyfr.plugins.catalyst import CatalystPlugin
 from pyfr.util import subclass_where
-
 
 def get_plugin(name, *args, **kwargs):
     return subclass_where(BasePlugin, name=name)(*args, **kwargs)
