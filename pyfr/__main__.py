@@ -197,6 +197,9 @@ def _process_common(args, mesh, soln, cfg):
 
         enable_prefork()
 
+    # Create a backend
+    backend = get_backend(args.backend, cfg)
+
     # Import but do not initialise MPI
     from mpi4py import MPI
 
@@ -205,9 +208,6 @@ def _process_common(args, mesh, soln, cfg):
 
     # Ensure MPI is suitably cleaned up
     register_finalize_handler()
-
-    # Create a backend
-    backend = get_backend(args.backend, cfg)
 
     # Get the mapping from physical ranks to MPI ranks
     rallocs = get_rank_allocation(mesh, cfg)
