@@ -189,6 +189,9 @@ def process_export(args):
 
 
 def _process_common(args, mesh, soln, cfg):
+    # Create a backend
+    backend = get_backend(args.backend, cfg)
+
     # Prefork to allow us to exec processes after MPI is initialised
     if hasattr(os, 'fork'):
         from pytools.prefork import enable_prefork
@@ -203,9 +206,6 @@ def _process_common(args, mesh, soln, cfg):
 
     # Ensure MPI is suitably cleaned up
     register_finalize_handler()
-
-    # Create a backend
-    backend = get_backend(args.backend, cfg)
 
     # Get the mapping from physical ranks to MPI ranks
     rallocs = get_rank_allocation(mesh, cfg)
@@ -223,6 +223,9 @@ def _process_common(args, mesh, soln, cfg):
 
     # Execute!
     solver.run()
+
+    # Finalise MPI
+    MPI.Finalize()
 
 
 def process_run(args):
