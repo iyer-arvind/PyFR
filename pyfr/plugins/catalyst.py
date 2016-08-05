@@ -53,17 +53,7 @@ class CatalystPlugin(BasePlugin):
         hostname = self.cfg.get(self.cfgsect, 'hostname')
         c_hostname = create_string_buffer(bytes(hostname, encoding='utf_8'))
         port = self.cfg.getint(self.cfgsect, 'port');
-        # Overwrite hostname/port with environment variables: otherwise launching
-        # on titan requires rewriting the .ini && is a bit of a nightmare.
-        hostname = os.getenv("PV_HOSTNAME")
-        port = os.getenv("PV_PORT")
-        if hostname == None:
-            print("PV_HOSTNAME environment variable is required.")
-            os._exit(1)
-        if port == None:
-            print("PV_PORT environment variable is required.")
-            os._exit(1)
-        print("[tjfPyFR] pv/host port is %s:%s" % (hostname, port))
+
         prec = self.cfg.get('backend', 'precision', 'double')
         if prec  == 'double':
             self.catalyst = load_library('pyfr_catalyst_fp64')
@@ -122,7 +112,7 @@ class CatalystPlugin(BasePlugin):
 
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
-                                                      port,
+                                                      c_int(int(port)),
                                                       c_outputfile,
                                                       self._catalystData)
 
