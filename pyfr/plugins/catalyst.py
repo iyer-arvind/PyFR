@@ -35,7 +35,9 @@ class CatalystData(Structure):
     _fields_ = [
         ('nCellTypes', c_int),
         ('meshData', POINTER(MeshDataForCellType)),
-        ('solutionData', POINTER(SolutionDataForCellType))
+        ('solutionData', POINTER(SolutionDataForCellType)),
+        ('isovalues', POINTER(c_float)),
+        ('niso', c_uint)
     ]
 
 
@@ -53,6 +55,10 @@ class CatalystPlugin(BasePlugin):
         hostname = self.cfg.get(self.cfgsect, 'hostname')
         c_hostname = create_string_buffer(bytes(hostname, encoding='utf_8'))
         port = self.cfg.getint(self.cfgsect, 'port');
+        # 'isovalues' in the config file should be a list.
+        isovalues = self.cfg.getliteral(self.cfgsect, 'isovalues')
+        self.isovalues = (c_float * len(isovalues))()
+        for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
 
         prec = self.cfg.get('backend', 'precision', 'double')
         if prec  == 'double':
@@ -104,7 +110,9 @@ class CatalystPlugin(BasePlugin):
         catalystData.append(
             CatalystData(nCellTypes = len(meshData),
              meshData = (MeshDataForCellType*len(meshData))(*meshData),
-             solutionData = (SolutionDataForCellType*len(solnData))(*solnData)))
+             solutionData = (SolutionDataForCellType*len(solnData))(*solnData),
+             isovalues = self.isovalues,
+             niso = len(isovalues)))
         self._catalystData = (CatalystData*len(catalystData))(*catalystData)
 
         # Wrap the kernels in a proxy list
