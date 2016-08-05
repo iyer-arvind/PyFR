@@ -219,4 +219,5 @@ class CatalystPlugin(BasePlugin):
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
 
-        self.catalyst.CatalystCoProcess(c_double(intg.tcurr),intg.nacptsteps,self._data)
+        self.catalyst.CatalystCoProcess(c_double(intg.tcurr), intg.nacptsteps,
+                                        self._data, c_bool(False))
