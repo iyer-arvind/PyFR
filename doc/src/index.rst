@@ -13,6 +13,7 @@ Contents:
    theory
    user_guide
    developer_guide
+   catalyst
 
 Indices and Tables
 ******************
