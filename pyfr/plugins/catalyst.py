@@ -8,6 +8,7 @@ from pyfr.ctypesutil import load_library
 from pyfr.shapes import BaseShape
 from pyfr.util import proxylist, subclass_where
 import os
+import configparser
 
 # Contains relevant data pertaining to all instances of a single cell type
 class MeshDataForCellType(Structure):
@@ -38,7 +39,10 @@ class CatalystData(Structure):
         ('solutionData', POINTER(SolutionDataForCellType)),
         ('isovalues', POINTER(c_float)),
         ('niso', c_uint),
-        ('metadata', c_bool)
+        ('metadata', c_bool),
+        ('eye', POINTER(c_float)),
+        ('ref', POINTER(c_float)),
+        ('vup', POINTER(c_float)),
     ]
 
 
@@ -62,6 +66,28 @@ class CatalystPlugin(BasePlugin):
         for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
         self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+
+        # parse out the [optional] eye/ref/vup parameters.
+        def literal_or_vec3f(key):
+            # We use NaN to mean "value was not present."
+            a = [ float('NaN'), float('NaN'), float('NaN') ]
+            try:
+                a = self.cfg.getliteral(self.cfgsect, key)
+                if len(a) != 3:
+                    raise Exception(key + " must be a 3-element list")
+            except configparser.NoOptionError:
+                pass
+            return a
+        eye = literal_or_vec3f('eye')
+        ref = literal_or_vec3f('ref')
+        vup = literal_or_vec3f('vup')
+
+        self.eye = (c_float * 3)()
+        self.ref = (c_float * 3)()
+        self.vup = (c_float * 3)()
+        self.eye[0] = eye[0]; self.eye[1] = eye[1]; self.eye[2] = eye[2]
+        self.ref[0] = ref[0]; self.ref[1] = ref[1]; self.ref[2] = ref[2]
+        self.vup[0] = vup[0]; self.vup[1] = vup[1]; self.vup[2] = vup[2]
 
         prec = self.cfg.get('backend', 'precision', 'double')
         if prec  == 'double':
@@ -116,7 +142,8 @@ class CatalystPlugin(BasePlugin):
              solutionData = (SolutionDataForCellType*len(solnData))(*solnData),
              isovalues = self.isovalues,
              niso = len(isovalues),
-             metadata = c_bool(self.metadata))
+             metadata = c_bool(self.metadata),
+             eye=self.eye, ref=self.ref, vup=self.vup)
         )
         self._catalystData = (CatalystData*len(catalystData))(*catalystData)
 

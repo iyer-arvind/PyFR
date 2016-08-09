@@ -19,7 +19,7 @@ To use the plugin, a new section of PyFR's .ini file must be created:
 Ini file
 ^^^^^^^^
 
-The ``soln-plugin-catalyst`` accepts a number of parameters.
+The ``soln-plugin-catalyst`` section accepts a number of parameters.
 
 - *nsteps*: the number of simulation timesteps to progress before performing
   visualization.  Lower numbers produce a more fluid, responsive visualization
@@ -73,11 +73,6 @@ X server
 
 You will need to run an X server on the server nodes to be able to
 generate images.
-
-Known issues
-------------
-
-- ``eye``/``ref``/``vup`` are not yet implemented!
 
 Sample Workflow
 ---------------
