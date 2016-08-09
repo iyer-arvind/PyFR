@@ -41,7 +41,7 @@ The ``soln-plugin-catalyst`` accepts a number of parameters.
   direction they are laying).
 
 ``eye`` / ``ref`` / ``vup`` can be omitted to have ParaView automatically
-choose the camera positions (but see 'Known Issues', below).
+choose the camera positions.
 
 Environment variables
 ^^^^^^^^^^^^^^^^^^^^^
@@ -53,7 +53,7 @@ configuration.  Environment variables *override* the values specified in the
 - *PV_HOSTNAME*: the hostname with running `pvserver` to connect to.
 - *PV_PORT*: port number for `pvserver` connection.
 
-Using these is recommended in supercomputing environments, as the host and
+These are recommended in supercomputing environments, as the host and
 port names are typically not available until the job launches.
 
 Software setup
@@ -77,29 +77,28 @@ generate images.
 Known issues
 ------------
 
-- The bounds of the domain are not reported to ParaView correctly.  This
-  causes ParaView to choose poor camera positions.  Use the camera
-  configuration .ini parameters as a workaround.
+- ``eye``/``ref``/``vup`` are not yet implemented!
 
 Sample Workflow
 ---------------
 
-1. Get everything setup and working with a 2 GPU test case.  Particularly on a
-   supercomputer, this will require many iterations debugging environment
-   variable settings (e.g. ``LD_LIBRARY_PATH``.)
+1. Get everything setup and working with a scaled-down version of your desired
+   run.  Set the ``metadata_out`` parameter to ``True`` in your .ini file.
 
-2. Examine standard output when running the job for lines such as:
-   ``[catalyst] world bounds0: [ -4.48, 53.4, -32.5, 32.5, -32.4, 32.4, ]``
-   This line comes from the C++ code ("``[catalyst]``").  It reports the
-   world-space bounds of the isosurface[s] on process 0.
+2. Examine your job's output for ``[catalyst]`` lines.  The ``range`` lines
+   give the per-timestep scalar range of the data given to the isosurfacing
+   algorithm.  The ``world bounds`` lines give per-timestep information on
+   where the domain lies in world space.
 
-3. Revisit the ``eye``/``ref``/``vup`` parameters given the above world space
-   bounds.  ``[10.0, 0.0, 0.0]``
+3. Revisit the ``isovalues`` parameter based on the ``range`` metadata.
+   You will need at least one isovalue within the range for a visible
+   isosurface to appear.
 
-4. Examine standard output when running the job for lines such as::
+4. Consider setting the ``eye``/``ref``/``vup`` parameters based on the ``world
+   bounds`` metadata.
 
-  [catalyst] range1: 0.994779--1.00526
+5. Repeat from step 1 until satisfied.
 
-5. Revisit the ``isovalues`` parameters given the above bounds on the scalar.
+6. Set ``metadata_out`` to ``False`` in your .ini file.
 
-6. Rerun.
+7. Run using your large-scale input.
