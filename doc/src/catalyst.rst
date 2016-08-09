@@ -28,6 +28,9 @@ The ``soln-plugin-catalyst`` accepts a number of parameters.
 - *hostname*: the hostname that the plugin will try to connect to for the
   `pvserver` process.
 - *port*: port to connect to on the aforementioned *hostname*.
+- *metadata_out*: Boolean.  output per-timestep metadata as the simulation
+  runs.  Note that this adds global communciation to every visualization
+  invocation.
 - *isovalues*: python list containing the isovalues to use for computing
   isosurfaces.
 - *eye*: 3-element python list specifying where the camera falls (X, Y, Z)

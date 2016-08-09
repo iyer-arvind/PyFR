@@ -37,7 +37,8 @@ class CatalystData(Structure):
         ('meshData', POINTER(MeshDataForCellType)),
         ('solutionData', POINTER(SolutionDataForCellType)),
         ('isovalues', POINTER(c_float)),
-        ('niso', c_uint)
+        ('niso', c_uint),
+        ('metadata', c_bool)
     ]
 
 
@@ -59,6 +60,8 @@ class CatalystPlugin(BasePlugin):
         isovalues = self.cfg.getliteral(self.cfgsect, 'isovalues')
         self.isovalues = (c_float * len(isovalues))()
         for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
+        # 'metadata_out' indicates the user wants to output per-TS metadata.
+        self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
 
         prec = self.cfg.get('backend', 'precision', 'double')
         if prec  == 'double':
@@ -112,7 +115,9 @@ class CatalystPlugin(BasePlugin):
              meshData = (MeshDataForCellType*len(meshData))(*meshData),
              solutionData = (SolutionDataForCellType*len(solnData))(*solnData),
              isovalues = self.isovalues,
-             niso = len(isovalues)))
+             niso = len(isovalues),
+             metadata = c_bool(self.metadata))
+        )
         self._catalystData = (CatalystData*len(catalystData))(*catalystData)
 
         # Wrap the kernels in a proxy list
