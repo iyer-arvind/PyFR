@@ -65,7 +65,10 @@ class CatalystPlugin(BasePlugin):
         self.isovalues = (c_float * len(isovalues))()
         for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
-        self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+        try:
+            self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+        except configparser.NoOptionError:
+            self.metadata = False
 
         # parse out the [optional] eye/ref/vup parameters.
         def literal_or_vec3f(key):
