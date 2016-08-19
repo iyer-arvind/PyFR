@@ -5,13 +5,29 @@ import re
 
 import h5py
 import numpy as np
+from mpi4py import MPI
 
+from pyfr.mpiutil import get_comm_rank_root
 from pyfr.util import memoize
 
 
 class NativeReader(Mapping):
     def __init__(self, fname):
         self._file = h5py.File(fname, 'r')
+
+        if MPI.Is_initialized():
+            # MPI info
+            comm, rank, root = get_comm_rank_root()
+
+            if rank == root:
+                keys = tuple(self._file.keys())
+            else:
+                keys = None
+
+            self._keys = comm.bcast(keys, root=root)
+        else:
+            self._keys = tuple(self._file.keys())
+
 
     def __getitem__(self, aname):
         ret = self._file[aname]
@@ -24,10 +40,10 @@ class NativeReader(Mapping):
         return ret.decode() if isinstance(ret, bytes) else ret
 
     def __iter__(self):
-        return iter(self._file)
+        return iter(self._keys)
 
     def __len__(self):
-        return len(self._file)
+        return len(self._keys)
 
     @memoize
     def array_info(self, prefix):

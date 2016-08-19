@@ -188,7 +188,7 @@ def process_export(args):
     writer.write_out()
 
 
-def _process_common(args, mesh, soln, cfg):
+def _init_mpi():
     # Prefork to allow us to exec processes after MPI is initialised
     if hasattr(os, 'fork'):
         from pytools.prefork import enable_prefork
@@ -203,6 +203,11 @@ def _process_common(args, mesh, soln, cfg):
 
     # Ensure MPI is suitably cleaned up
     register_finalize_handler()
+
+
+def _process_common(args, mesh, soln, cfg):
+    # Import but do not initialise MPI
+    from mpi4py import MPI
 
     # Create a backend
     backend = get_backend(args.backend, cfg)
@@ -226,12 +231,14 @@ def _process_common(args, mesh, soln, cfg):
 
 
 def process_run(args):
+    _init_mpi()
     _process_common(
         args, NativeReader(args.mesh), None, Inifile.load(args.cfg)
     )
 
 
 def process_restart(args):
+    _init_mpi()
     mesh = NativeReader(args.mesh)
     soln = NativeReader(args.soln)
 
