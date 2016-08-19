@@ -2,6 +2,7 @@
 
 import math
 import re
+import time
 
 from pyfr.integrators.base import BaseIntegrator
 from pyfr.mpiutil import get_comm_rank_root, get_mpi
@@ -15,7 +16,7 @@ class BaseController(BaseIntegrator):
 
         # Current and minimum time steps
         self._dt = self.cfg.getfloat('solver-time-integrator', 'dt')
-        self.dtmin = 1.0e-14
+        self.dtmin = 1.0e-12
 
         # Solution filtering frequency
         self._fnsteps = self.cfg.getint('soln-filter', 'nsteps', '0')
@@ -31,8 +32,14 @@ class BaseController(BaseIntegrator):
         self.nrjctsteps = 0
         self.nacptchain = 0
 
+        # Stats on the most recent step
+        self.stepinfo = []
+
         # Event handlers for advance_to
         self.completed_step_handlers = proxylist([])
+
+        # Record the starting wall clock time
+        self._wstart = time.time()
 
         # Load any plugins specified in the config file
         for s in self.cfg.sections():
@@ -49,10 +56,17 @@ class BaseController(BaseIntegrator):
         # Delete the memory-intensive elements map from the system
         del self.system.ele_map
 
-    def _accept_step(self, dt, idxcurr):
+    def collect_stats(self, stats):
+        super().collect_stats(stats)
+
+        wtime = time.time() - self._wstart
+        stats.set('solver-time-integrator', 'wall-time', wtime)
+
+    def _accept_step(self, dt, idxcurr, err=None):
         self.tcurr += dt
         self.nacptsteps += 1
         self.nacptchain += 1
+        self.stepinfo.append((dt, 'accept', err))
 
         self._idxcurr = idxcurr
 
@@ -66,12 +80,16 @@ class BaseController(BaseIntegrator):
         # Fire off any event handlers
         self.completed_step_handlers(self)
 
-    def _reject_step(self, dt, idxold):
+        # Clear the step info
+        self.stepinfo = []
+
+    def _reject_step(self, dt, idxold, err=None):
         if dt <= self.dtmin:
             raise RuntimeError('Minimum sized time step rejected')
 
         self.nacptchain = 0
         self.nrjctsteps += 1
+        self.stepinfo.append((dt, 'reject', err))
 
         self._idxcurr = idxold
 
@@ -193,6 +211,6 @@ class PIController(BaseController):
             # Decide if to accept or reject the step
             if err < 1.0:
                 self._errprev = err
-                self._accept_step(dt, idxcurr)
+                self._accept_step(dt, idxcurr, err=err)
             else:
-                self._reject_step(dt, idxprev)
+                self._reject_step(dt, idxprev, err=err)

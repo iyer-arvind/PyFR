@@ -24,9 +24,8 @@ Python packages:
 1. `h5py <http://www.h5py.org/>`_ >= 2.5
 2. `mako <http://www.makotemplates.org/>`_ >= 1.0.0
 3. `mpi4py <http://mpi4py.scipy.org/>`_ >= 1.3
-4. `mpmath <http://code.google.com/p/mpmath/>`_ >= 0.18
-5. `numpy <http://www.numpy.org/>`_ >= 1.8
-6. `pytools <https://pypi.python.org/pypi/pytools>`_ >= 2014.3
+4. `numpy <http://www.numpy.org/>`_ >= 1.8
+5. `pytools <https://pypi.python.org/pypi/pytools>`_ >= 2014.3
 
 Note that due to a bug in `numpy <http://www.numpy.org/>`_ PyFR is not
 compatible with 32-bit Python distributions.
@@ -40,6 +39,17 @@ or greater. The backend requires:
 1. `CUDA <https://developer.nvidia.com/cuda-downloads>`_ >= 4.2
 2. `pycuda <http://mathema.tician.de/software/pycuda/>`_ >= 2011.2
 
+MIC Backend
+^^^^^^^^^^^
+
+The MIC backend targets Intel Xeon Phi co-processors. The backend
+requires:
+
+1. ICC >= 14.0
+2. Intel MKL >= 11.1
+3. Intel MPSS >= 3.3
+4. `pymic <https://github.com/01org/pyMIC>`_ >= 0.7 (post commit 4d8a2da)
+
 OpenCL Backend
 ^^^^^^^^^^^^^^
 
@@ -48,7 +58,7 @@ AMD and NVIDIA. The backend requires:
 
 1. OpenCL
 2. `pyopencl <http://mathema.tician.de/software/pyopencl/>`_
-   >= 2013.2, != 2015.2, != 2015.2.1
+   >= 2015.2.4
 3. `clBLAS <https://github.com/clMathLibraries/clBLAS>`_
 
 OpenMP Backend
@@ -68,6 +78,14 @@ have one of the following partitioners installed:
 
 1. `metis <http://glaros.dtc.umn.edu/gkhome/views/metis>`_ >= 5.0
 2. `scotch <http://www.labri.fr/perso/pelegrin/scotch/>`_ >= 6.0
+
+Importing CGNS Meshes
+^^^^^^^^^^^^^^^^^^^^^
+
+To import CGNS meshes it is necessary to have the following installed:
+
+1. `CGNS <http://cgns.github.io/>`_ >= 3.3 (develop branch post commit
+   e0faea6)
 
 Installation
 ------------
@@ -97,7 +115,8 @@ PyFR |release| uses three distinct file formats:
 The following commands are available from the ``pyfr`` program:
 
 1. ``pyfr import`` --- convert a `Gmsh
-   <http:http://geuz.org/gmsh/>`_ .msh file into a PyFR .pyfrm file.
+   <http:http://geuz.org/gmsh/>`_ .msh file or `CGNS
+   <http://cgns.github.io/>`_ .cgns file into a PyFR .pyfrm file.
 
    Example::
 
@@ -171,10 +190,29 @@ Parameterises the CUDA backend with
 
      *int* | ``round-robin`` | ``local-rank``
 
+2. ``gimmik-max-nnz`` --- cutoff for GiMMiK in terms of the number of
+   non-zero entires in a constant matrix:
+
+     *int*
+
 Example::
 
     [backend-cuda]
     device-id = round-robin
+    gimmik-max-nnz = 512
+
+[backend-mic]
+^^^^^^^^^^^^^^^^
+
+Parameterises the MIC backend with
+
+1. ``device-id`` --- for selecting which device(s) to run on:
+
+    *int* | ``local-rank``
+
+1. ``mkl-root`` --- path to MKL root directory:
+
+    *string*
 
 [backend-opencl]
 ^^^^^^^^^^^^^^^^
@@ -193,12 +231,18 @@ Parameterises the OpenCL backend with
 
     *int* | *string* | ``local-rank``
 
+4. ``gimmik-max-nnz`` --- cutoff for GiMMiK in terms of the number of
+   non-zero entires in a constant matrix:
+
+     *int*
+
 Example::
 
     [backend-opencl]
     platform-id = 0
     device-type = gpu
     device-id = local-rank
+    gimmik-max-nnz = 512
 
 [backend-openmp]
 ^^^^^^^^^^^^^^^^
@@ -209,7 +253,7 @@ Parameterises the OpenMP backend with
 
     *string*
 
-2. ``cflags`` --- Additional C compiler flags:
+2. ``cflags`` --- additional C compiler flags:
 
     *string*
 
@@ -815,11 +859,42 @@ Example::
     file = residual.csv
     header = true
 
+[soln-plugin-dtstats]
+^^^^^^^^^^^^^^^^^^^^^^
+
+Write time-step statistics out to a CSV file. Parameterised with
+
+1. ``flushsteps`` --- flush to disk every ``flushsteps``:
+
+    *int*
+
+2. ``file`` --- output file path; should the file already exist it
+   will be appended to:
+
+    *string*
+
+3. ``header`` --- if to output a header row or not:
+
+    *boolean*
+
+Example::
+
+    [soln-plugin-dtstats]
+    flushsteps = 100
+    file = dtstats.csv
+    header = true
+
 [soln-plugin-sampler]
 ^^^^^^^^^^^^^^^^^^^^^
 
 Periodically samples specific points in the volume and writes them out
-to a CSV file. Parameterised with
+to a CSV file.  The plugin actually samples the solution point
+closest to each sample point, hence a slight discrepancy in the output
+sampling locations is to be expected.  A nearest-neighbour search is
+used to locate the closest solution point to the sample point.  The
+location process automatically takes advantage of
+`scipy.spatial.cKDTree <http://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html>`_
+where available.  Parameterised with
 
 1. ``nsteps`` --- sample every ``nsteps``:
 
@@ -976,13 +1051,13 @@ with
 
            *float*
 
-        - ``theta`` --- azimuth angle of inflow measured in
-          the x-y plane relative to the global positive x-axis
+        - ``theta`` --- azimuth angle (in degrees) of inflow measured
+          in the x-y plane relative to the positive x-axis
 
            *float*
 
-        - ``phi`` --- inclination angle of inflow measured
-          relative to the global positive z-axis
+        - ``phi`` --- inclination angle (in degrees) of inflow measured
+          relative to the positive z-axis
 
            *float*
 
@@ -1080,7 +1155,7 @@ simulation on a mixed unstructured mesh:
    generating a series of PyFR solution files called
    ``couette_flow_2d-*.pyfrs``::
 
-        pyfr run -p couette_flow_2d.pyfrm couette_flow_2d.ini
+        pyfr run -b cuda -p couette_flow_2d.pyfrm couette_flow_2d.ini
 
 6. Run pyfr on the solution file ``couette_flow_2d-040.pyfrs``
    converting it into an unstructured VTK file called
@@ -1130,7 +1205,7 @@ simulation on a structured mesh:
 6. Run pyfr to solve the Euler equations on the mesh, generating a
    series of PyFR solution files called ``euler_vortex_2d*.pyfrs``::
 
-        mpirun -n 2 pyfr run -p euler_vortex_2d.pyfrm euler_vortex_2d.ini
+        mpirun -n 2 pyfr run -b cuda -p euler_vortex_2d.pyfrm euler_vortex_2d.ini
 
 7. Run pyfr on the solution file ``euler_vortex_2d-100.0.pyfrs``
    converting it into an unstructured VTK file called

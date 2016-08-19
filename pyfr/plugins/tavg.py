@@ -53,7 +53,7 @@ class TavgPlugin(BasePlugin):
         for soln, ploc in zip(intg.soln, self.plocs):
             # Get the primitive variable names and solutions
             pnames = self.elementscls.privarmap[self.ndims]
-            psolns = self.elementscls.conv_to_pri(soln.swapaxes(0, 1),
+            psolns = self.elementscls.con_to_pri(soln.swapaxes(0, 1),
                                                   self.cfg)
 
             # Prepare the substitutions dictionary
@@ -67,7 +67,7 @@ class TavgPlugin(BasePlugin):
         return [np.dstack(exs).swapaxes(1, 2) for exs in exprs]
 
     def __call__(self, intg):
-        dowrite = abs(self.tout - intg.tcurr) < intg.dtmin
+        dowrite = abs(self.tout - intg.tcurr) < self.tol
         doaccum = intg.nacptsteps % self.nsteps == 0
 
         if dowrite or doaccum:

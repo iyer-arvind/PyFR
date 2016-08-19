@@ -21,8 +21,8 @@ class NavierStokesIntInters(BaseAdvectionDiffusionIntInters):
         # Generate the additional view matrices for artificial viscosity
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
         if shock_capturing == 'artificial-viscosity':
-            avis0_lhs = self._avis_view(lhs, 'get_avis_fpts_for_inter')
-            avis0_rhs = self._avis_view(rhs, 'get_avis_fpts_for_inter')
+            avis0_lhs = self._view(lhs, 'get_avis_fpts_for_inter')
+            avis0_rhs = self._view(rhs, 'get_avis_fpts_for_inter')
             tplargs['art_vis'] = 'mu'
         else:
             avis0_lhs = avis0_rhs = None
@@ -41,8 +41,7 @@ class NavierStokesIntInters(BaseAdvectionDiffusionIntInters):
             ul=self._scal0_lhs, ur=self._scal0_rhs,
             gradul=self._vect0_lhs, gradur=self._vect0_rhs,
             amul=avis0_lhs, amur=avis0_rhs,
-            magnl=self._mag_pnorm_lhs, magnr=self._mag_pnorm_rhs,
-            nl=self._norm_pnorm_lhs
+            magnl=self._mag_pnorm_lhs, nl=self._norm_pnorm_lhs
         )
 
 
@@ -59,7 +58,7 @@ class NavierStokesMPIInters(BaseAdvectionDiffusionMPIInters):
         # Generate the additional kernels/views for artificial viscosity
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
         if shock_capturing == 'artificial-viscosity':
-            avis0_lhs = self._avis_xchg_view(lhs, 'get_avis_fpts_for_inter')
+            avis0_lhs = self._xchg_view(lhs, 'get_avis_fpts_for_inter')
             avis0_rhs = be.xchg_matrix_for_view(avis0_lhs)
 
             # If we need to send our artificial viscosity to the RHS
@@ -123,7 +122,7 @@ class NavierStokesBaseBCInters(BaseAdvectionDiffusionBCInters):
         # Generate the additional view matrices for artificial viscosity
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
         if shock_capturing == 'artificial-viscosity':
-            avis0_lhs = self._avis_view(lhs, 'get_avis_fpts_for_inter')
+            avis0_lhs = self._view(lhs, 'get_avis_fpts_for_inter')
             tplargs['art_vis'] = 'mu'
         else:
             avis0_lhs = None
@@ -208,7 +207,7 @@ class NavierStokesSubInflowFrvBCInters(NavierStokesBaseBCInters):
 
         tplc, self._ploc = self._exp_opts(
             ['rho', 'u', 'v', 'w'][:self.ndims + 1], lhs,
-            default={'u':0, 'v': 0, 'w':0}
+            default={'u': 0, 'v': 0, 'w': 0}
         )
 
         self._tpl_c.update(tplc)

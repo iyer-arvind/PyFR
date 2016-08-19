@@ -1,6 +1,26 @@
 # -*- coding: utf-8 -*-
 
 from abc import ABCMeta, abstractmethod
+import os
+
+
+def init_csv(cfg, cfgsect, header, *, filekey='file', headerkey='header'):
+    # Determine the file path
+    fname = cfg.get(cfgsect, filekey)
+
+    # Append the '.csv' extension
+    if not fname.endswith('.csv'):
+        fname += '.csv'
+
+    # Open for appending
+    outf = open(fname, 'a')
+
+    # Output a header if required
+    if os.path.getsize(fname) == 0 and cfg.getbool(cfgsect, headerkey, True):
+        print(header, file=outf)
+
+    # Return the file
+    return outf
 
 
 class BasePlugin(object, metaclass=ABCMeta):
@@ -16,6 +36,9 @@ class BasePlugin(object, metaclass=ABCMeta):
 
         self.ndims = intg.system.ndims
         self.nvars = intg.system.nvars
+
+        # Tolerance for time comparisons
+        self.tol = 5*intg.dtmin
 
         # Check that we support this particular system
         if not ('*' in self.systems or intg.system.name in self.systems):
