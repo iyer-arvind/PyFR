@@ -71,6 +71,9 @@ class HOPRReader(BaseReader):
         con_typ = [('f0', 'S4'), ('f1', 'i4'), ('f2', 'i1'), ('f3', 'i1')]
         for i in range(self.hpr['BCNames'].shape[0] + 1):
             bc_index = np.where(sides[:, 4] == i)[0]
+            if not len(bc_index):
+                continue
+
             gf_map[i] = {gi-1: ii for ii, gi in
                          enumerate(sorted(set(abs(sides[bc_index, 1]))))}
             if i:
