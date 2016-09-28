@@ -2,7 +2,7 @@
 
 import itertools as it
 import os
-import threading
+import sys
 
 import numpy as np
 
@@ -40,6 +40,7 @@ class SpatialAverage(BasePlugin):
 
         self.basedir = self.cfg.getpath(cfgsect, 'basedir', '.')
         self.basename = self.cfg.get(cfgsect, 'basename')
+        self.fpdtype = intg.backend.fpdtype
 
         # Expressions to time average
         c = self.cfg.items_as('constants', float)
@@ -162,11 +163,11 @@ class SpatialAverage(BasePlugin):
         exprs = np.rollaxis(exprs, 2, 0)
         n_eles, n_vars, n_upts = exprs.shape
 
-        line_sol = np.zeros((n_eles, self.n_upts_line, n_vars))
+        line_sol = np.zeros((n_eles, self.n_upts_line, n_vars), dtype=self.fpdtype)
 
         if self.first_iteration:
             # Set the lineplocs
-            line_ploc_upts = np.zeros((n_eles, self.n_upts_line))
+            line_ploc_upts = np.zeros((n_eles, self.n_upts_line), dtype=self.fpdtype)
 
         for i, (idx, p, s) in enumerate(zip(self.idx, self.ploc_upts, exprs)):
             # Split the arrays after reordering them, now each split
@@ -193,12 +194,26 @@ class SpatialAverage(BasePlugin):
                 # Set the solution
                 line_sol[i, pi, :] = vals
 
+
         # MPI info
         comm, rank, root = get_comm_rank_root()
         if self.first_iteration:
+            line_sol_shapes = comm.gather((rank, line_sol.shape))
             line_ploc_upts_all = comm.gather(line_ploc_upts.flatten())
+
             if rank == root:
+                # Prepare the buffers for persistent communication
                 line_ploc_upts_all = np.concatenate(line_ploc_upts_all)
+                self._mpi_rbufs = mpi_rbufs = []
+                self._mpi_rreqs = mpi_rreqs = []
+
+                for rrank, shape in line_sol_shapes:
+                    rbuf = np.empty(shape, dtype=self.fpdtype)
+                    mpi_rbufs.append(rbuf)
+
+                    if rrank != 0:
+                        rreq = comm.Recv_init(rbuf, rrank, 0)
+                        mpi_rreqs.append(rreq)
 
                 # Get the order of sorting
                 ordering = np.argsort(line_ploc_upts_all)
@@ -210,10 +225,19 @@ class SpatialAverage(BasePlugin):
                     lists[-1][1].append(o)
                     pc = c
 
-        line_sols = comm.gather(line_sol.reshape([-1, n_vars]))
         u_bulk = 0
 
+        from mpi4py import MPI
+
         if rank == root:
+            # Copy over the local data
+            self._mpi_rbufs[root][...] = line_sol
+
+            # Wait for the remote data
+            MPI.Prequest.Startall(self._mpi_rreqs)
+            MPI.Prequest.Waitall(self._mpi_rreqs)
+            line_sols = [l.reshape([-1, n_vars]) for l in self._mpi_rbufs]
+
             line_sols = np.concatenate(line_sols)
             a = [(c, np.average(line_sols[l, :], axis=0))
                  for c, l in self.lists]
@@ -246,6 +270,10 @@ class SpatialAverage(BasePlugin):
             if write:
                 np.savetxt(self._get_output_path(tcurr), data, header=header)
                 self.nout += 1
+        else:
+            # Send data to root
+            comm.Send(line_sol, root, 0)
+
 
         self.first_iteration = False
         return u_bulk
