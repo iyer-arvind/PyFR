@@ -3,7 +3,6 @@
 from ctypes import *
 import importlib.util
 import time
-
 from mpi4py import MPI
 import numpy as np
 from pyfr.plugins.base import BasePlugin
@@ -12,7 +11,6 @@ from pyfr.shapes import BaseShape
 from pyfr.util import proxylist, subclass_where
 import os
 import configparser
-
 
 # Contains relevant data pertaining to all instances of a single cell type
 class MeshDataForCellType(Structure):
@@ -49,7 +47,6 @@ class CatalystData(Structure):
         ('vup', POINTER(c_float)),
     ]
 
-        
 class Camera(object):
     def __init__(self, spec_file, offset, scale):
         data = np.loadtxt(spec_file, delimiter=' ')
@@ -83,7 +80,6 @@ class CatalystPlugin(BasePlugin):
 
     def __init__(self, intg, *args, **kwargs):
         _start = time.time()
-    
         super().__init__(intg, *args, **kwargs)
 
         self.divisor = self.cfg.getint(self.cfgsect, 'divisor', 3)

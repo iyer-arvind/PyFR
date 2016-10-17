@@ -11,6 +11,5 @@ from pyfr.plugins.writer import WriterPlugin
 from pyfr.plugins.catalyst import CatalystPlugin
 from pyfr.util import subclass_where
 
-
 def get_plugin(name, *args, **kwargs):
     return subclass_where(BasePlugin, name=name)(*args, **kwargs)
