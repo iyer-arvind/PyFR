@@ -102,7 +102,7 @@ class CatalystPlugin(BasePlugin):
         for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
         try:
-            self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+            self.metadata = self.cfg.getbool(self.cfgsect, 'metadata_out')
         except configparser.NoOptionError:
             self.metadata = False
 
@@ -332,4 +332,5 @@ class CatalystPlugin(BasePlugin):
                                             self._data, c_bool(False))
 
 
-        print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
+        if self.metadata:
+            print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
