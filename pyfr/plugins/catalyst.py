@@ -6,6 +6,9 @@ import time
 
 from mpi4py import MPI
 import numpy as np
+from pycuda import compiler
+
+from pycuda.gpuarray import splay
 from pyfr.plugins.base import BasePlugin
 from pyfr.ctypesutil import load_library
 from pyfr.shapes import BaseShape
@@ -147,13 +150,8 @@ class CatalystPlugin(BasePlugin):
         self.ref[0] = ref[0]; self.ref[1] = ref[1]; self.ref[2] = ref[2]
         self.vup[0] = vup[0]; self.vup[1] = vup[1]; self.vup[2] = vup[2]
 
-        prec = self.cfg.get('backend', 'precision', 'double')
-        if prec  == 'double':
-            self.catalyst = load_library('pyfr_catalyst_fp64')
-        else:
-            self.catalyst = load_library('pyfr_catalyst_fp32')
-
-        ###################
+        # Load catalyst library
+        self.catalyst = load_library('pyfr_catalyst_fp32')
 
         self.backend = backend = intg.backend
         self.mesh = intg.system.mesh
@@ -167,6 +165,38 @@ class CatalystPlugin(BasePlugin):
 
         # Solution arrays
         self.eles_scal_upts_inb = inb = intg.system.eles_scal_upts_inb
+
+        # Check Dobule precision
+        prec = self.cfg.get('backend', 'precision', 'double')
+        if prec == 'double':
+            # Change precision as single
+            backend.fpdtype = np.dtype('single')
+
+            # Converter from dp to sp
+            kern = compiler.SourceModule("""
+                __global__ void cvt(const double *src, float *dst)
+                {
+                  int i = blockIdx.x*blockDim.x + threadIdx.x;
+                  dst[i] = src[i];
+                }
+                """).get_function('cvt')
+            kern.prepare('PP')
+
+            class CVTKernel(object):
+                def __init__(self, soln, ssoln):
+                    self.soln = soln
+                    self.ssoln = ssoln
+                    cnt = soln.nrow * soln.leaddim
+
+                    # Compute a suitable block and grid
+                    self.grid, self.block = splay(cnt)
+
+                def __call__(self):
+                    kern.prepared_call(self.grid, self.block,
+                                       self.soln, self.ssoln)
+
+        # CVT kerns
+        ckerns = []
 
         # Prepare the mesh data and solution data
         meshData, solnData, kerns = [], [], []
@@ -184,8 +214,16 @@ class CatalystPlugin(BasePlugin):
                                         lsdim = vismat.leadsubdim,
                                         soln = vismat.data)
 
-            # Prepare the matrix multiplication kernel
-            k = backend.kernel('mul', solnop, solnmat, out=vismat)
+            if prec == 'double':
+                # Prepare to convert dp to sp
+                ssolnmat = backend.matrix(solnmat.datashape, tags={'align'})
+                ckerns.append(CVTKernel(solnmat, ssolnmat))
+
+                # Prepare the matrix multiplication kernel
+                k = backend.kernel('mul', ssolnmat, solnmat, out=vismat)
+            else:
+                # Prepare the matrix multiplication kernel
+                k = backend.kernel('mul', solnop, solnmat, out=vismat)
 
             # Append
             meshData.append(p)
@@ -214,6 +252,14 @@ class CatalystPlugin(BasePlugin):
                                                       c_outputfile,
                                                       self._catalystData)
         print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
+
+        if prec == 'double':
+            # Wrap the convert kernel in a proxy list
+            self._conver_sp = proxylist(ckerns)
+
+            # Roll back to double precision
+            self.backend.fpdtype = np.dtype('double')
+
 
     def _prepare_vtu(self, etype, part):
         from pyfr.writers.vtk import BaseShapeSubDiv
@@ -288,10 +334,13 @@ class CatalystPlugin(BasePlugin):
 
     def __call__(self, intg):
         _start = time.time()
-        if np.isclose(intg.tcurr,intg.tend):
+        if np.isclose(intg.tcurr, intg.tend):
 
             # Configure the input bank
             self.eles_scal_upts_inb.active = intg._idxcurr
+
+            # Convert dp to sp
+            self._conver_sp()
 
             # Interpolate to the vis points
             self._queue % self._interpolate_upts()
