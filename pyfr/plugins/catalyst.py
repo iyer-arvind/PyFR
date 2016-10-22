@@ -8,7 +8,8 @@ from mpi4py import MPI
 import numpy as np
 from pycuda import compiler
 
-from pycuda.gpuarray import splay
+from pyfr.backends.base import ComputeKernel
+from pyfr.backends.cuda.provider import  get_grid_for_block
 from pyfr.plugins.base import BasePlugin
 from pyfr.ctypesutil import load_library
 from pyfr.shapes import BaseShape
@@ -177,23 +178,22 @@ class CatalystPlugin(BasePlugin):
                 __global__ void cvt(const double *src, float *dst)
                 {
                   int i = blockIdx.x*blockDim.x + threadIdx.x;
-                  dst[i] = src[i];
+                  dst[i] = (float)src[i];
                 }
                 """).get_function('cvt')
             kern.prepare('PP')
 
-            class CVTKernel(object):
-                def __init__(self, soln, ssoln):
-                    self.soln = soln
-                    self.ssoln = ssoln
-                    cnt = soln.nrow * soln.leaddim
+            def gen_cvtkern(soln, ssoln):
+                block = (192, 1, 1)
+                grid = get_grid_for_block(block, soln.nrow * soln.leaddim)
 
-                    # Compute a suitable block and grid
-                    self.grid, self.block = splay(cnt)
+                class CVTKern(ComputeKernel):
+                    def run(self, queue):
+                        kern.prepared_async_call(grid, block,
+                                                 queue.cuda_stream_comp,
+                                                 soln, ssoln)
 
-                def __call__(self):
-                    kern.prepared_call(self.grid, self.block,
-                                       self.soln, self.ssoln)
+                return CVTKern()
 
         # CVT kerns
         ckerns = []
@@ -206,6 +206,7 @@ class CatalystPlugin(BasePlugin):
             # Allocate on the backend
             vismat = backend.matrix((p.nVerticesPerCell, self.nvars, p.nCells),
                                     tags={'align'})
+
             solnop = backend.const_matrix(solnop)
             backend.commit()
 
@@ -216,11 +217,11 @@ class CatalystPlugin(BasePlugin):
 
             if prec == 'double':
                 # Prepare to convert dp to sp
-                ssolnmat = backend.matrix(solnmat.datashape, tags={'align'})
-                ckerns.append(CVTKernel(solnmat, ssolnmat))
+                ssolnmat = backend.matrix(solnmat.ioshape, tags={'align'})
+                ckerns.append(gen_cvtkern(solnmat, ssolnmat))
 
                 # Prepare the matrix multiplication kernel
-                k = backend.kernel('mul', ssolnmat, solnmat, out=vismat)
+                k = backend.kernel('mul', solnop, ssolnmat, out=vismat)
             else:
                 # Prepare the matrix multiplication kernel
                 k = backend.kernel('mul', solnop, solnmat, out=vismat)
@@ -245,6 +246,7 @@ class CatalystPlugin(BasePlugin):
 
         # Wrap the kernels in a proxy list
         self._interpolate_upts = proxylist(kerns)
+        self._conver_sp = proxylist(ckerns)
 
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
@@ -254,9 +256,6 @@ class CatalystPlugin(BasePlugin):
         print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
 
         if prec == 'double':
-            # Wrap the convert kernel in a proxy list
-            self._conver_sp = proxylist(ckerns)
-
             # Roll back to double precision
             self.backend.fpdtype = np.dtype('double')
 
@@ -340,7 +339,8 @@ class CatalystPlugin(BasePlugin):
             self.eles_scal_upts_inb.active = intg._idxcurr
 
             # Convert dp to sp
-            self._conver_sp()
+            if self._conver_sp:
+                self._queue % self._conver_sp()
 
             # Interpolate to the vis points
             self._queue % self._interpolate_upts()
@@ -354,6 +354,10 @@ class CatalystPlugin(BasePlugin):
 
         # Configure the input bank
         self.eles_scal_upts_inb.active = intg._idxcurr
+
+        # Convert dp to sp
+        if self._conver_sp:
+            self._queue % self._conver_sp()
 
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
