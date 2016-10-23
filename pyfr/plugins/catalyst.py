@@ -175,23 +175,30 @@ class CatalystPlugin(BasePlugin):
 
             # Converter from dp to sp
             kern = compiler.SourceModule("""
-                __global__ void cvt(const double *src, float *dst)
+                __global__ void cvt(const int nrow, const int ncol, const double *src, const int ldsrc, float *dst, const int lddst)
                 {
                   int i = blockIdx.x*blockDim.x + threadIdx.x;
-                  dst[i] = (float)src[i];
+                  if (i < ncol) {
+                  for (int j=0; j < nrow; j++) {
+                  dst[j*lddst + i] = (float)src[j*ldsrc + i];
+                  }
+                  }
                 }
                 """).get_function('cvt')
-            kern.prepare('PP')
+            kern.prepare('iiPiPi')
 
             def gen_cvtkern(soln, ssoln):
+                nrow, ncol = soln.nrow, soln.ncol
                 block = (192, 1, 1)
-                grid = get_grid_for_block(block, soln.nrow * soln.leaddim)
+                grid = get_grid_for_block(block, soln.ncol)
 
                 class CVTKern(ComputeKernel):
                     def run(self, queue):
                         kern.prepared_async_call(grid, block,
                                                  queue.cuda_stream_comp,
-                                                 soln, ssoln)
+                                                 nrow, ncol,
+                                                 soln, soln.leaddim,
+                                                 ssoln, ssoln.leaddim)
 
                 return CVTKern()
 
@@ -390,3 +397,4 @@ class CatalystPlugin(BasePlugin):
 
 
         print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
+
