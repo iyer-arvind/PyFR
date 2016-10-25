@@ -6,6 +6,10 @@ import time
 
 from mpi4py import MPI
 import numpy as np
+from pycuda import compiler
+
+from pyfr.backends.base import ComputeKernel
+from pyfr.backends.cuda.provider import  get_grid_for_block
 from pyfr.plugins.base import BasePlugin
 from pyfr.ctypesutil import load_library
 from pyfr.shapes import BaseShape
@@ -106,7 +110,7 @@ class CatalystPlugin(BasePlugin):
         for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
         try:
-            self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+            self.metadata = self.cfg.getbool(self.cfgsect, 'metadata_out')
         except configparser.NoOptionError:
             self.metadata = False
 
@@ -147,13 +151,8 @@ class CatalystPlugin(BasePlugin):
         self.ref[0] = ref[0]; self.ref[1] = ref[1]; self.ref[2] = ref[2]
         self.vup[0] = vup[0]; self.vup[1] = vup[1]; self.vup[2] = vup[2]
 
-        prec = self.cfg.get('backend', 'precision', 'double')
-        if prec  == 'double':
-            self.catalyst = load_library('pyfr_catalyst_fp64')
-        else:
-            self.catalyst = load_library('pyfr_catalyst_fp32')
-
-        ###################
+        # Load catalyst library
+        self.catalyst = load_library('pyfr_catalyst_fp32')
 
         self.backend = backend = intg.backend
         self.mesh = intg.system.mesh
@@ -168,6 +167,44 @@ class CatalystPlugin(BasePlugin):
         # Solution arrays
         self.eles_scal_upts_inb = inb = intg.system.eles_scal_upts_inb
 
+        # Check Dobule precision
+        prec = self.cfg.get('backend', 'precision', 'double')
+        if prec == 'double':
+            # Change precision as single
+            backend.fpdtype = np.dtype('single')
+
+            # Converter from dp to sp
+            kern = compiler.SourceModule("""
+                __global__ void cvt(const int nrow, const int ncol, const double *src, const int ldsrc, float *dst, const int lddst)
+                {
+                  int i = blockIdx.x*blockDim.x + threadIdx.x;
+                  if (i < ncol) {
+                  for (int j=0; j < nrow; j++) {
+                  dst[j*lddst + i] = (float)src[j*ldsrc + i];
+                  }
+                  }
+                }
+                """).get_function('cvt')
+            kern.prepare('iiPiPi')
+
+            def gen_cvtkern(soln, ssoln):
+                nrow, ncol = soln.nrow, soln.ncol
+                block = (192, 1, 1)
+                grid = get_grid_for_block(block, soln.ncol)
+
+                class CVTKern(ComputeKernel):
+                    def run(self, queue):
+                        kern.prepared_async_call(grid, block,
+                                                 queue.cuda_stream_comp,
+                                                 nrow, ncol,
+                                                 soln, soln.leaddim,
+                                                 ssoln, ssoln.leaddim)
+
+                return CVTKern()
+
+        # CVT kerns
+        ckerns = []
+
         # Prepare the mesh data and solution data
         meshData, solnData, kerns = [], [], []
         for etype, solnmat in zip(intg.system.ele_types, inb):
@@ -176,6 +213,7 @@ class CatalystPlugin(BasePlugin):
             # Allocate on the backend
             vismat = backend.matrix((p.nVerticesPerCell, self.nvars, p.nCells),
                                     tags={'align'})
+
             solnop = backend.const_matrix(solnop)
             backend.commit()
 
@@ -184,8 +222,16 @@ class CatalystPlugin(BasePlugin):
                                         lsdim = vismat.leadsubdim,
                                         soln = vismat.data)
 
-            # Prepare the matrix multiplication kernel
-            k = backend.kernel('mul', solnop, solnmat, out=vismat)
+            if prec == 'double':
+                # Prepare to convert dp to sp
+                ssolnmat = backend.matrix(solnmat.ioshape, tags={'align'})
+                ckerns.append(gen_cvtkern(solnmat, ssolnmat))
+
+                # Prepare the matrix multiplication kernel
+                k = backend.kernel('mul', solnop, ssolnmat, out=vismat)
+            else:
+                # Prepare the matrix multiplication kernel
+                k = backend.kernel('mul', solnop, solnmat, out=vismat)
 
             # Append
             meshData.append(p)
@@ -207,6 +253,7 @@ class CatalystPlugin(BasePlugin):
 
         # Wrap the kernels in a proxy list
         self._interpolate_upts = proxylist(kerns)
+        self._conver_sp = proxylist(ckerns)
 
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
@@ -214,6 +261,11 @@ class CatalystPlugin(BasePlugin):
                                                       c_outputfile,
                                                       self._catalystData)
         print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
+
+        if prec == 'double':
+            # Roll back to double precision
+            self.backend.fpdtype = np.dtype('double')
+
 
     def _prepare_vtu(self, etype, part):
         from pyfr.writers.vtk import BaseShapeSubDiv
@@ -288,10 +340,17 @@ class CatalystPlugin(BasePlugin):
 
     def __call__(self, intg):
         _start = time.time()
-        if np.isclose(intg.tcurr,intg.tend):
+        if np.isclose(intg.tcurr, intg.tend):
 
             # Configure the input bank
             self.eles_scal_upts_inb.active = intg._idxcurr
+
+            # Configure the input bank
+            self.eles_scal_upts_inb.active = intg._idxcurr
+
+            # Convert dp to sp
+            if self._conver_sp:
+                self._queue % self._conver_sp()
 
             # Interpolate to the vis points
             self._queue % self._interpolate_upts()
@@ -305,6 +364,10 @@ class CatalystPlugin(BasePlugin):
 
         # Configure the input bank
         self.eles_scal_upts_inb.active = intg._idxcurr
+
+        # Convert dp to sp
+        if self._conver_sp:
+            self._queue % self._conver_sp()
 
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
@@ -336,4 +399,5 @@ class CatalystPlugin(BasePlugin):
                                             self._data, c_bool(False))
 
 
-        print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
+        if self.metadata:
+            print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
