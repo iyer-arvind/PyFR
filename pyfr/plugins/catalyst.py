@@ -57,6 +57,10 @@ class CatalystData(Structure):
 class Camera(object):
     def __init__(self, spec_file, offset, scale):
         data = np.loadtxt(spec_file, delimiter=' ')
+        if len(data.shape) == 1:
+            data = data[np.newaxis,...]
+        print(data.shape)
+
         self.time = np.hstack(([0], np.cumsum(data[:,0])))[:-1]
         self.eye = data[:,1:4]
         self.vup = data[:,4:7]
@@ -150,6 +154,8 @@ class CatalystPlugin(BasePlugin):
         self.eye[0] = eye[0]; self.eye[1] = eye[1]; self.eye[2] = eye[2]
         self.ref[0] = ref[0]; self.ref[1] = ref[1]; self.ref[2] = ref[2]
         self.vup[0] = vup[0]; self.vup[1] = vup[1]; self.vup[2] = vup[2]
+
+
 
         # Load catalyst library
         self.catalyst = load_library('pyfr_catalyst_fp32')
@@ -255,16 +261,51 @@ class CatalystPlugin(BasePlugin):
         self._interpolate_upts = proxylist(kerns)
         self._conver_sp = proxylist(ckerns)
 
+        # Image Resolution
+
+
+
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
                                                       c_int(int(port)),
                                                       c_outputfile,
                                                       self._catalystData)
-        print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
+
+        img_res = (c_uint32 * 2)()
+        img_res[0], img_res[1] = self.cfg.getliteral(self.cfgsect, 'image-size', '400, 600')
+        self.catalyst.CatalystImageResolution(self._catalystData, img_res)
+
+    
+            
+        color = (c_float *3)()
+        color[0], color[1], color[2] = self.cfg.getliteral(self.cfgsect, 'image-bgcolor', '1.0, 1.0, 1.0')
+        self.catalyst.CatalystBGColor(self._data, color)
+
+        col_min, col_max = self.cfg.getliteral(self.cfgsect, 'color-range', '0.01, 0.99')
+        self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max))
+
+        self.color_map = self.cfg.getliteral(self.cfgsect, 'color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 0)')
+        print(self.color_map)
+
+        n_cols = len(self.color_map)
+        colors = (c_uint8*(n_cols*4))()
+        pivots = (c_float*n_cols)()
+        for i, (p, r, g, b, a) in enumerate(self.color_map):
+            print(p, r, g, b, a)
+            pivots[i] = p
+            colors[i*4+0], colors[i*4+1], colors[i*4+2], colors[i*4+3] = r, g, b, a
+        
+        print('Range: ', col_min, col_max)
+        print('Colors: ', [colors[i] for i in range(4*n_cols)])
+        print('Pivots: ', [pivots[i] for i in range(n_cols)])
+        self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols))
+
 
         if prec == 'double':
             # Roll back to double precision
             self.backend.fpdtype = np.dtype('double')
+
+        print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
 
 
     def _prepare_vtu(self, etype, part):
@@ -371,7 +412,12 @@ class CatalystPlugin(BasePlugin):
 
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
-        
+
+
+       
+
+
+
         if self.camera:
             for name, camera in self.camera.items():
                 eye, ref, vup = camera(intg.tcurr)
@@ -387,7 +433,7 @@ class CatalystPlugin(BasePlugin):
                 c_fnp = create_string_buffer(bytes(prefix, encoding='utf_8'))
                 self.catalyst.CatalystFilenamePrefix(self._data, c_fnp)
 
-
+                
                 self.catalyst.CatalystCamera(self._data, self.eye, self.ref, self.vup)
 
                 self.catalyst.CatalystCoProcess(c_double(intg.tcurr), intg.nacptsteps,
@@ -395,6 +441,7 @@ class CatalystPlugin(BasePlugin):
 
 
         else:
+
             self.catalyst.CatalystCoProcess(c_double(intg.tcurr), intg.nacptsteps,
                                             self._data, c_bool(False))
 
