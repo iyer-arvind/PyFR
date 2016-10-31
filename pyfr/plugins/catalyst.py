@@ -105,13 +105,9 @@ class CatalystPlugin(BasePlugin):
 
         port = self.cfg.getint(self.cfgsect, 'port');
 
-        # 'isovalues' in the config file should be a list.
-        isovalues = self.cfg.getliteral(self.cfgsect, 'isovalues')
-        self.isovalues = (c_float * len(isovalues))()
 
         self.image_dir= self.cfg.get(self.cfgsect, 'image-dir', '.')
 
-        for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
         try:
             self.metadata = self.cfg.getbool(self.cfgsect, 'metadata_out')
@@ -244,14 +240,30 @@ class CatalystPlugin(BasePlugin):
             solnData.append(s)
             kerns.append(k)
 
+        pipeline_mode = {'contour':1, 'slice':2}[
+            self.cfg.get(self.cfgsect, 'pipeline', 'contour')]
+
+        if pipeline_mode == 1:
+            # 'isovalues' in the config file should be a list.
+            iv = self.cfg.getliteral(self.cfgsect, 'isovalues')
+            niso = len(iv)
+            isovalues = (c_float * niso)()
+            for i in range(len(isovalues)):
+                isovalues[i] = iv[i]
+
+        else:
+            niso = 0
+            isovalues = POINTER(c_float)() #Null Pointer
+            
+        
         # Save the pieces
         catalystData = []
         catalystData.append(
             CatalystData(nCellTypes = len(meshData),
              meshData = (MeshDataForCellType*len(meshData))(*meshData),
              solutionData = (SolutionDataForCellType*len(solnData))(*solnData),
-             isovalues = self.isovalues,
-             niso = len(isovalues),
+             isovalues = isovalues,
+             niso = niso,
              metadata = c_bool(self.metadata),
              eye=self.eye, ref=self.ref, vup=self.vup)
         )
@@ -261,21 +273,41 @@ class CatalystPlugin(BasePlugin):
         self._interpolate_upts = proxylist(kerns)
         self._conver_sp = proxylist(ckerns)
 
-        # Image Resolution
-
-
 
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
                                                       c_int(int(port)),
                                                       c_outputfile,
+                                                      pipeline_mode,
                                                       self._catalystData)
 
+        fields = {'rho':0, 'u':1, 'v':2, 'w':3, 'e':1, 'Q':9, 'grad_rho':5, 'grad_v':6, 'grade': 7}
+
+        if pipeline_mode == 1:
+            cntb = fields[self.cfg.get(self.cfgsect, 'contour-by', 'Q')]
+            self.catalyst.CatalystSetFieldToContourBy(cntb)
+
+            clb = fields[self.cfg.get(self.cfgsect, 'color-by', 'rho')]
+            self.catalyst.CatalystSetFieldToColorBy(clb)
+
+        if pipeline_mode == 2:
+            origin = (c_float*3)()
+            normal = (c_float*3)()
+
+            o = self.cfg.getliteral(self.cfgsect, 'slice-origin', [0, 0, 0])
+            n = self.cfg.getliteral(self.cfgsect, 'slice-normal', [0, 0, 1])
+            for i in range(3):
+                origin[i] = o[i]
+                normal[i] = n[i]
+
+            self.catalyst.CatalystSetSlicePlanes(origin, normal, 1, 0)
+
+            
+
+        # Image Resolution
         img_res = (c_uint32 * 2)()
         img_res[0], img_res[1] = self.cfg.getliteral(self.cfgsect, 'image-size', '400, 600')
         self.catalyst.CatalystImageResolution(self._catalystData, img_res)
-
-    
             
         color = (c_float *3)()
         color[0], color[1], color[2] = self.cfg.getliteral(self.cfgsect, 'image-bgcolor', '1.0, 1.0, 1.0')
@@ -412,11 +444,6 @@ class CatalystPlugin(BasePlugin):
 
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
-
-
-       
-
-
 
         if self.camera:
             for name, camera in self.camera.items():
