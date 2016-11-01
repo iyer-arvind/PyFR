@@ -285,7 +285,7 @@ class CatalystPlugin(BasePlugin):
                                                       pipeline_mode,
                                                       self._catalystData)
 
-        fields = {'rho':0, 'u':1, 'v':2, 'w':3, 'e':1, 'Q':9, 'grad_rho':5, 'grad_v':6, 'grade': 7}
+        fields = {'rho':0, 'u':1, 'v':2, 'w':3, 'e':1, 'Q':9, 'vel_mag':5, 'grad_rho':6, 'grad_v':7, 'grade': 8}
 
         if pipeline_mode == 1:
             cntb = fields[self.cfg.get(self.cfgsect, 'contour-by', 'Q')]
