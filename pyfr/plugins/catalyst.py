@@ -175,20 +175,24 @@ class CatalystPlugin(BasePlugin):
 
             # Converter from dp to sp
             kern = compiler.SourceModule("""
-                __global__ void cvt(const int nrow, const int ncol, const double *src, const int ldsrc, float *dst, const int lddst)
+                __global__ void cvt(const int nrow, const int nvars,
+                const int neles, const double *src, const int lsdsrc,
+                float *dst, const int lsddst)
                 {
                   int i = blockIdx.x*blockDim.x + threadIdx.x;
-                  if (i < ncol) {
+                  if (i < neles) {
                   for (int j=0; j < nrow; j++) {
-                  dst[j*lddst + i] = (float)src[j*ldsrc + i];
+                  for (int k=0; k < nvars; k++) {
+                  dst[(nvars*j+k)*lsddst + i] = (float)src[(nvars*j+k)*lsdsrc + i];
+                  }
                   }
                   }
                 }
                 """).get_function('cvt')
-            kern.prepare('iiPiPi')
+            kern.prepare('iiiPiPi')
 
             def gen_cvtkern(soln, ssoln):
-                nrow, ncol = soln.nrow, soln.ncol
+                nrow, nvars, neles = soln.ioshape
                 block = (192, 1, 1)
                 grid = get_grid_for_block(block, soln.ncol)
 
@@ -196,9 +200,9 @@ class CatalystPlugin(BasePlugin):
                     def run(self, queue):
                         kern.prepared_async_call(grid, block,
                                                  queue.cuda_stream_comp,
-                                                 nrow, ncol,
-                                                 soln, soln.leaddim,
-                                                 ssoln, ssoln.leaddim)
+                                                 nrow, nvars, neles,
+                                                 soln, soln.leadsubdim,
+                                                 ssoln, ssoln.leadsubdim)
 
                 return CVTKern()
 
