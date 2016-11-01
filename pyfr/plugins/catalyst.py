@@ -57,6 +57,10 @@ class CatalystData(Structure):
 class Camera(object):
     def __init__(self, spec_file, offset, scale):
         data = np.loadtxt(spec_file, delimiter=' ')
+        if len(data.shape) == 1:
+            data = data[np.newaxis,...]
+        print(data.shape)
+
         self.time = np.hstack(([0], np.cumsum(data[:,0])))[:-1]
         self.eye = data[:,1:4]
         self.vup = data[:,4:7]
@@ -101,16 +105,12 @@ class CatalystPlugin(BasePlugin):
 
         port = self.cfg.getint(self.cfgsect, 'port');
 
-        # 'isovalues' in the config file should be a list.
-        isovalues = self.cfg.getliteral(self.cfgsect, 'isovalues')
-        self.isovalues = (c_float * len(isovalues))()
 
         self.image_dir= self.cfg.get(self.cfgsect, 'image-dir', '.')
 
-        for i in range(len(isovalues)): self.isovalues[i] = isovalues[i]
         # 'metadata_out' indicates the user wants to output per-TS metadata.
         try:
-            self.metadata = self.cfg.get(self.cfgsect, 'metadata_out')
+            self.metadata = self.cfg.getbool(self.cfgsect, 'metadata_out')
         except configparser.NoOptionError:
             self.metadata = False
 
@@ -150,6 +150,8 @@ class CatalystPlugin(BasePlugin):
         self.eye[0] = eye[0]; self.eye[1] = eye[1]; self.eye[2] = eye[2]
         self.ref[0] = ref[0]; self.ref[1] = ref[1]; self.ref[2] = ref[2]
         self.vup[0] = vup[0]; self.vup[1] = vup[1]; self.vup[2] = vup[2]
+
+
 
         # Load catalyst library
         self.catalyst = load_library('pyfr_catalyst_fp32')
@@ -242,14 +244,30 @@ class CatalystPlugin(BasePlugin):
             solnData.append(s)
             kerns.append(k)
 
+        pipeline_mode = {'contour':1, 'slice':2}[
+            self.cfg.get(self.cfgsect, 'pipeline', 'contour')]
+
+        if pipeline_mode == 1:
+            # 'isovalues' in the config file should be a list.
+            iv = self.cfg.getliteral(self.cfgsect, 'isovalues')
+            niso = len(iv)
+            isovalues = (c_float * niso)()
+            for i in range(len(isovalues)):
+                isovalues[i] = iv[i]
+
+        else:
+            niso = 0
+            isovalues = POINTER(c_float)() #Null Pointer
+            
+        
         # Save the pieces
         catalystData = []
         catalystData.append(
             CatalystData(nCellTypes = len(meshData),
              meshData = (MeshDataForCellType*len(meshData))(*meshData),
              solutionData = (SolutionDataForCellType*len(solnData))(*solnData),
-             isovalues = self.isovalues,
-             niso = len(isovalues),
+             isovalues = isovalues,
+             niso = niso,
              metadata = c_bool(self.metadata),
              eye=self.eye, ref=self.ref, vup=self.vup)
         )
@@ -259,16 +277,71 @@ class CatalystPlugin(BasePlugin):
         self._interpolate_upts = proxylist(kerns)
         self._conver_sp = proxylist(ckerns)
 
+
         # Finally, initialize Catalyst
         self._data = self.catalyst.CatalystInitialize(c_hostname,
                                                       c_int(int(port)),
                                                       c_outputfile,
+                                                      pipeline_mode,
                                                       self._catalystData)
-        print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
+
+        fields = {'rho':0, 'u':1, 'v':2, 'w':3, 'e':1, 'Q':9, 'grad_rho':5, 'grad_v':6, 'grade': 7}
+
+        if pipeline_mode == 1:
+            cntb = fields[self.cfg.get(self.cfgsect, 'contour-by', 'Q')]
+            self.catalyst.CatalystSetFieldToContourBy(cntb)
+
+            clb = fields[self.cfg.get(self.cfgsect, 'color-by', 'rho')]
+            self.catalyst.CatalystSetFieldToColorBy(clb)
+
+        if pipeline_mode == 2:
+            origin = (c_float*3)()
+            normal = (c_float*3)()
+
+            o = self.cfg.getliteral(self.cfgsect, 'slice-origin', [0, 0, 0])
+            n = self.cfg.getliteral(self.cfgsect, 'slice-normal', [0, 0, 1])
+            for i in range(3):
+                origin[i] = o[i]
+                normal[i] = n[i]
+
+            self.catalyst.CatalystSetSlicePlanes(origin, normal, 1, 0)
+
+            
+
+        # Image Resolution
+        img_res = (c_uint32 * 2)()
+        img_res[0], img_res[1] = self.cfg.getliteral(self.cfgsect, 'image-size', '400, 600')
+        self.catalyst.CatalystImageResolution(self._catalystData, img_res)
+            
+        color = (c_float *3)()
+        color[0], color[1], color[2] = self.cfg.getliteral(self.cfgsect, 'image-bgcolor', '1.0, 1.0, 1.0')
+        self.catalyst.CatalystBGColor(self._data, color)
+
+        col_min, col_max = self.cfg.getliteral(self.cfgsect, 'color-range', '0.01, 0.99')
+        self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max))
+
+        self.color_map = self.cfg.getliteral(self.cfgsect, 'color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 0)')
+        print(self.color_map)
+
+        n_cols = len(self.color_map)
+        colors = (c_uint8*(n_cols*4))()
+        pivots = (c_float*n_cols)()
+        for i, (p, r, g, b, a) in enumerate(self.color_map):
+            print(p, r, g, b, a)
+            pivots[i] = p
+            colors[i*4+0], colors[i*4+1], colors[i*4+2], colors[i*4+3] = r, g, b, a
+        
+        print('Range: ', col_min, col_max)
+        print('Colors: ', [colors[i] for i in range(4*n_cols)])
+        print('Pivots: ', [pivots[i] for i in range(n_cols)])
+        self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols))
+
 
         if prec == 'double':
             # Roll back to double precision
             self.backend.fpdtype = np.dtype('double')
+
+        print('Catalyst plugin initialization time: {}s'.format(time.time()-_start))
 
 
     def _prepare_vtu(self, etype, part):
@@ -349,6 +422,9 @@ class CatalystPlugin(BasePlugin):
             # Configure the input bank
             self.eles_scal_upts_inb.active = intg._idxcurr
 
+            # Configure the input bank
+            self.eles_scal_upts_inb.active = intg._idxcurr
+
             # Convert dp to sp
             if self._conver_sp:
                 self._queue % self._conver_sp()
@@ -372,7 +448,7 @@ class CatalystPlugin(BasePlugin):
 
         # Interpolate to the vis points
         self._queue % self._interpolate_upts()
-        
+
         if self.camera:
             for name, camera in self.camera.items():
                 eye, ref, vup = camera(intg.tcurr)
@@ -388,7 +464,7 @@ class CatalystPlugin(BasePlugin):
                 c_fnp = create_string_buffer(bytes(prefix, encoding='utf_8'))
                 self.catalyst.CatalystFilenamePrefix(self._data, c_fnp)
 
-
+                
                 self.catalyst.CatalystCamera(self._data, self.eye, self.ref, self.vup)
 
                 self.catalyst.CatalystCoProcess(c_double(intg.tcurr), intg.nacptsteps,
@@ -396,9 +472,10 @@ class CatalystPlugin(BasePlugin):
 
 
         else:
+
             self.catalyst.CatalystCoProcess(c_double(intg.tcurr), intg.nacptsteps,
                                             self._data, c_bool(False))
 
 
-        print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
-
+        if self.metadata:
+            print('Catalyst plugin __call__ time: {}s'.format(time.time()-_start))
