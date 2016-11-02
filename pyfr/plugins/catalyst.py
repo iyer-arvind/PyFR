@@ -154,7 +154,9 @@ class CatalystPlugin(BasePlugin):
 
 
         # Load catalyst library
-        self.catalyst = load_library('pyfr_catalyst_fp32')
+        print("loading pyfr_{}_catalyst_fp32".format(self.suffix))
+        self.catalyst = load_library('pyfr_{}_catalyst_fp32'.format(self.suffix))
+        print(self.catalyst)
 
         self.backend = backend = intg.backend
         self.mesh = intg.system.mesh
@@ -244,21 +246,13 @@ class CatalystPlugin(BasePlugin):
             solnData.append(s)
             kerns.append(k)
 
-        pipeline_mode = {'contour':1, 'slice':2}[
-            self.cfg.get(self.cfgsect, 'pipeline', 'contour')]
+        # 'isovalues' in the config file should be a list.
+        iv = self.cfg.getliteral(self.cfgsect, 'isovalues',[1.0])
+        niso = len(iv)
+        isovalues = (c_float * niso)()
+        for i in range(len(isovalues)):
+            isovalues[i] = iv[i]
 
-        if pipeline_mode == 1:
-            # 'isovalues' in the config file should be a list.
-            iv = self.cfg.getliteral(self.cfgsect, 'isovalues')
-            niso = len(iv)
-            isovalues = (c_float * niso)()
-            for i in range(len(isovalues)):
-                isovalues[i] = iv[i]
-
-        else:
-            niso = 0
-            isovalues = POINTER(c_float)() #Null Pointer
-            
         
         # Save the pieces
         catalystData = []
@@ -279,32 +273,33 @@ class CatalystPlugin(BasePlugin):
 
 
         # Finally, initialize Catalyst
+        print('Initializing catalyst plugin.... ')
         self._data = self.catalyst.CatalystInitialize(c_hostname,
                                                       c_int(int(port)),
                                                       c_outputfile,
-                                                      pipeline_mode,
                                                       self._catalystData)
 
         fields = {'rho':0, 'u':1, 'v':2, 'w':3, 'e':1, 'Q':9, 'vel_mag':5, 'grad_rho':6, 'grad_v':7, 'grade': 8}
 
-        if pipeline_mode == 1:
-            cntb = fields[self.cfg.get(self.cfgsect, 'contour-by', 'Q')]
-            self.catalyst.CatalystSetFieldToContourBy(cntb)
+        cntb = fields[self.cfg.get(self.cfgsect, 'contour-by', 'Q')]
+        self.catalyst.CatalystSetFieldToContourBy(cntb)
 
-            clb = fields[self.cfg.get(self.cfgsect, 'color-by', 'rho')]
-            self.catalyst.CatalystSetFieldToColorBy(clb)
+        clb = fields[self.cfg.get(self.cfgsect, 'contour-color-by', 'rho')]
+        self.catalyst.CatalystSetFieldToColorBy(clb, 1)
 
-        if pipeline_mode == 2:
-            origin = (c_float*3)()
-            normal = (c_float*3)()
+        clb = fields[self.cfg.get(self.cfgsect, 'slice-color-by', 'rho')]
+        self.catalyst.CatalystSetFieldToColorBy(clb, 2)
 
-            o = self.cfg.getliteral(self.cfgsect, 'slice-origin', [0, 0, 0])
-            n = self.cfg.getliteral(self.cfgsect, 'slice-normal', [0, 0, 1])
-            for i in range(3):
-                origin[i] = o[i]
-                normal[i] = n[i]
+        origin = (c_float*3)()
+        normal = (c_float*3)()
 
-            self.catalyst.CatalystSetSlicePlanes(origin, normal, 1, 0)
+        o = self.cfg.getliteral(self.cfgsect, 'slice-origin', [0, 0, 0])
+        n = self.cfg.getliteral(self.cfgsect, 'slice-normal', [0, 0, 1])
+        for i in range(3):
+            origin[i] = o[i]
+            normal[i] = n[i]
+
+        self.catalyst.CatalystSetSlicePlanes(origin, normal, 1, 0)
 
             
 
@@ -317,16 +312,19 @@ class CatalystPlugin(BasePlugin):
         color[0], color[1], color[2] = self.cfg.getliteral(self.cfgsect, 'image-bgcolor', '1.0, 1.0, 1.0')
         self.catalyst.CatalystBGColor(self._data, color)
 
-        col_min, col_max = self.cfg.getliteral(self.cfgsect, 'color-range', '0.01, 0.99')
-        self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max))
+        col_min, col_max = self.cfg.getliteral(self.cfgsect, 'contour-color-range', '0.01, 0.99')
+        self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max), 1)
 
-        self.color_map = self.cfg.getliteral(self.cfgsect, 'color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 0)')
-        print(self.color_map)
+        col_min, col_max = self.cfg.getliteral(self.cfgsect, 'slice-color-range', '0.01, 0.99')
+        self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max), 2)
 
-        n_cols = len(self.color_map)
+        color_map = self.cfg.getliteral(self.cfgsect, 'contour-color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)')
+        print(color_map)
+
+        n_cols = len(color_map)
         colors = (c_uint8*(n_cols*4))()
         pivots = (c_float*n_cols)()
-        for i, (p, r, g, b, a) in enumerate(self.color_map):
+        for i, (p, r, g, b, a) in enumerate(color_map):
             print(p, r, g, b, a)
             pivots[i] = p
             colors[i*4+0], colors[i*4+1], colors[i*4+2], colors[i*4+3] = r, g, b, a
@@ -334,7 +332,24 @@ class CatalystPlugin(BasePlugin):
         print('Range: ', col_min, col_max)
         print('Colors: ', [colors[i] for i in range(4*n_cols)])
         print('Pivots: ', [pivots[i] for i in range(n_cols)])
-        self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols))
+        self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols), 1)
+
+
+        color_map = self.cfg.getliteral(self.cfgsect, 'slice-color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)')
+        print(color_map)
+
+        n_cols = len(color_map)
+        colors = (c_uint8*(n_cols*4))()
+        pivots = (c_float*n_cols)()
+        for i, (p, r, g, b, a) in enumerate(color_map):
+            print(p, r, g, b, a)
+            pivots[i] = p
+            colors[i*4+0], colors[i*4+1], colors[i*4+2], colors[i*4+3] = r, g, b, a
+        
+        print('Range: ', col_min, col_max)
+        print('Colors: ', [colors[i] for i in range(4*n_cols)])
+        print('Pivots: ', [pivots[i] for i in range(n_cols)])
+        self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols), 2)
 
 
         if prec == 'double':
