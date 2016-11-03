@@ -154,8 +154,7 @@ class CatalystPlugin(BasePlugin):
 
 
         # Load catalyst library
-        print("loading pyfr_{}_catalyst_fp32".format(self.suffix))
-        self.catalyst = load_library('pyfr_{}_catalyst_fp32'.format(self.suffix))
+        self.catalyst = load_library('pyfr_catalyst_fp32')
         print(self.catalyst)
 
         self.backend = backend = intg.backend
@@ -318,7 +317,7 @@ class CatalystPlugin(BasePlugin):
         col_min, col_max = self.cfg.getliteral(self.cfgsect, 'slice-color-range', '0.01, 0.99')
         self.catalyst.CatalystSetColorRange(self._data, c_double(col_min), c_double(col_max), 2)
 
-        color_map = self.cfg.getliteral(self.cfgsect, 'contour-color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)')
+        color_map = self.cfg.getliteral(self.cfgsect, 'contour-color-map',[(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)])
         print(color_map)
 
         n_cols = len(color_map)
@@ -335,7 +334,7 @@ class CatalystPlugin(BasePlugin):
         self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols), 1)
 
 
-        color_map = self.cfg.getliteral(self.cfgsect, 'slice-color-map','(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)')
+        color_map = self.cfg.getliteral(self.cfgsect, 'slice-color-map',[(0.1, 255, 255, 255, 255), (0.9, 0, 0, 0, 255)])
         print(color_map)
 
         n_cols = len(color_map)
@@ -350,6 +349,23 @@ class CatalystPlugin(BasePlugin):
         print('Colors: ', [colors[i] for i in range(4*n_cols)])
         print('Pivots: ', [pivots[i] for i in range(n_cols)])
         self.catalyst.CatalystSetColorTable(self._data, colors, pivots, c_size_t(n_cols), 2)
+
+
+        cp = (self.cfg.getliteral(self.cfgsect, 'contour-clip-plane-1', [(0, 0.8, 0), (-0.8660, 0.5, 0)]),
+              self.cfg.getliteral(self.cfgsect, 'contour-clip-plane-2', [(0,-0.2, 0), ( 0.8660,-0.5, 0)]))
+
+
+        # plane / origin-normal / coordinate
+        cpc = [(c_float*3)(), (c_float*3)()],[(c_float*3)(), (c_float*3)()]
+
+        for p in range(2):
+            for i in range(2):
+                for j in range(3):
+                    cpc[p][i][j] = cp[p][i][j]
+        
+        print('Clip planes: ', cp)
+        print(cpc[0][0], cpc[0][1], cpc[1][0], cpc[1][1])
+        self.catalyst.CatalystSetClipPlanes(cpc[0][0], cpc[0][1], cpc[1][0], cpc[1][1])
 
 
         if prec == 'double':
@@ -393,7 +409,7 @@ class CatalystPlugin(BasePlugin):
             vpts = np.pad(vpts, [(0, 0), (0, 0), (0, 1)], 'constant')
 
         # Reorder and cast
-        vpts = vpts.swapaxes(0, 1).astype(self.backend.fpdtype, order='C')
+        vpts = vpts.swapaxes(0, 1).astype(np.float32, order='C')
 
         # Perform the sub division
         nodes = subdvcls.subnodes(self.divisor)
