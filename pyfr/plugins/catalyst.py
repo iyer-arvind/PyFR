@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from collections import OrderedDict
 from ctypes import *
 import importlib.util
 import time
@@ -133,8 +134,7 @@ class CatalystPlugin(BasePlugin):
             offset = self.cfg.getfloat(self.cfgsect, 'camera-t-off')
             scale = self.cfg.getfloat(self.cfgsect, 'camera-t-scale')
             
-            self.camera = {camera.rsplit('.', 1)[0]: Camera(camera, offset, scale)
-                           for camera in cameras}
+            self.camera = OrderedDict((camera.rsplit('.', 1)[0],Camera(camera, offset, scale)) for camera in cameras)
 
             eye, ref, vup = (-10,0,0), (0,0,0), (0,1,0)
 
@@ -364,7 +364,10 @@ class CatalystPlugin(BasePlugin):
                     cpc[p][i][j] = cp[p][i][j]
         
         print('Clip planes: ', cp)
-        print(cpc[0][0], cpc[0][1], cpc[1][0], cpc[1][1])
+        def pc(a):
+            return '[{},{},{}]'.format(a[0],a[1],a[2]) 
+
+        print(pc(cpc[0][0]), pc(cpc[0][1]), pc(cpc[1][0]), pc(cpc[1][1]))
         self.catalyst.CatalystSetClipPlanes(cpc[0][0], cpc[0][1], cpc[1][0], cpc[1][1])
 
 
@@ -494,6 +497,12 @@ class CatalystPlugin(BasePlugin):
                 prefix = '{}/{}.'.format(self.image_dir, name)
                 c_fnp = create_string_buffer(bytes(prefix, encoding='utf_8'))
                 self.catalyst.CatalystFilenamePrefix(self._data, c_fnp)
+                
+                if 'contour' in name:
+                    self.catalyst.CatalystSetViewToCoprocess(self._data, c_int(0))
+
+                else:
+                    self.catalyst.CatalystSetViewToCoprocess(self._data, c_int(1))
 
                 
                 self.catalyst.CatalystCamera(self._data, self.eye, self.ref, self.vup)
