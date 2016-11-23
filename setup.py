@@ -36,6 +36,7 @@ modules = [
     'pyfr.integrators.dual',
     'pyfr.integrators.std',
     'pyfr.plugins',
+    'pyfr.plugins.kernels',
     'pyfr.quadrules',
     'pyfr.readers',
     'pyfr.partitioners',
@@ -63,6 +64,7 @@ tests = [
 
 # Data
 package_data = {
+    'pyfr.plugins.kernels': ['*.mako'],
     'pyfr.backends.cuda.kernels': ['*.mako'],
     'pyfr.backends.mic.kernels': ['*.mako'],
     'pyfr.backends.opencl.kernels': ['*.mako'],
