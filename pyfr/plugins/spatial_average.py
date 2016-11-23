@@ -2,7 +2,6 @@
 
 import itertools as it
 import os
-import sys
 
 import numpy as np
 
@@ -222,31 +221,30 @@ class SpatialAverage(BasePlugin):
         self._queue % self._kernels['exprs']()
         self._queue % self._kernels['linesol']()
         line_sol = self.line_buf.get().swapaxes(0, 2).swapaxes(1, 2).copy(order='C')
-
         neles, nupts_line, nexprs  = line_sol.shape
+
+        # MPI info
+        comm, rank, root = get_comm_rank_root()
 
         if self.first_iteration:
             # Set the lineplocs
             line_ploc_upts = np.zeros((neles, self.nupts_line), dtype=self.fpdtype)
 
-        for i, (idx, p) in enumerate(zip(self.idx, self.ploc_upts)):
-            # Split the arrays after reordering them, now each split
-            # has the plocs of the homogeneous direction plane
-            # and the homogeneous direction solution.
-            for pi, pse in enumerate(np.split(p[:, idx], self.splits, 1)):
-                # Actual ploc of the non-homogeneous direction
-                hd = pse[self.swaps[self.directions][0]]
+            for i, (idx, p) in enumerate(zip(self.idx, self.ploc_upts)):
+                # Split the arrays after reordering them, now each split
+                # has the plocs of the homogeneous direction plane
+                # and the homogeneous direction solution.
+                for pi, pse in enumerate(np.split(p[:, idx], self.splits, 1)):
+                    # Actual ploc of the non-homogeneous direction
+                    hd = pse[self.swaps[self.directions][0]]
 
-                # Uncomment to enable check
-                assert np.max(np.abs(hd - hd[0])) < 1e-8
+                    # Uncomment to enable check
+                    assert np.max(np.abs(hd - hd[0])) < 1e-8
 
-                if self.first_iteration:
+
                     # Set the lineplocs
                     line_ploc_upts[i, pi] = hd[0]
 
-        # MPI info
-        comm, rank, root = get_comm_rank_root()
-        if self.first_iteration:
             line_sol_shapes = comm.gather((rank, line_sol.shape))
             line_ploc_upts_all = comm.gather(line_ploc_upts.flatten())
 
@@ -322,7 +320,6 @@ class SpatialAverage(BasePlugin):
         else:
             # Send data to root
             comm.Send(line_sol, root, 0)
-
 
         self.first_iteration = False
         return u_bulk
