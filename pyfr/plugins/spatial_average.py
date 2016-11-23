@@ -9,7 +9,7 @@ import numpy as np
 from pyfr.inifile import Inifile
 from pyfr.plugins.base import BasePlugin
 from pyfr.shapes import BaseShape
-from pyfr.util import subclass_where
+from pyfr.util import proxylist, subclass_where
 from pyfr.nputil import fuzzysort, npeval
 from pyfr.mpiutil import get_comm_rank_root
 
@@ -44,9 +44,16 @@ class SpatialAverage(BasePlugin):
 
         # Expressions to time average
         c = self.cfg.items_as('constants', float)
+        self.exprs_1 = [(k, self.cfg.getexpr(cfgsect, k, subs=c))
+                      for k in self.cfg.items(cfgsect)
+                      if k.startswith('avg-')]
+
+        c.update({vn:'v[{:d}]'.format(vc) for vc, vn in enumerate('uvw'[:self.ndims])})
         self.exprs = [(k, self.cfg.getexpr(cfgsect, k, subs=c))
                       for k in self.cfg.items(cfgsect)
                       if k.startswith('avg-')]
+
+        nexprs = len(self.exprs)
 
         # Append the relevant extension
         if not self.basename.endswith('.csv'):
@@ -59,6 +66,9 @@ class SpatialAverage(BasePlugin):
         if self.dt_out:
             intg.call_plugin_dt(self.dt_out)
 
+        # Making sure that we have only one type of elements
+        # In fact we need to make sure that they are only hexes
+        # and that the mesh is prismatic! But not easy to check that
         assert len(intg.system.ele_map) == 1
 
         # Locations of the shape points  nspts x neles x ndims
@@ -67,7 +77,7 @@ class SpatialAverage(BasePlugin):
             [a.eles for a in intg.system.ele_map.values()][0], 0, 1)
 
         # Number of shape points per element
-        n_eles, n_spts, n_dims = self.spts.shape
+        neles, nspts, ndims = self.spts.shape
 
         # Locations of the solution points  nupts x ndims x neles
         # Rotate to have neles x ndims x nupts
@@ -88,21 +98,21 @@ class SpatialAverage(BasePlugin):
 
         # The 2d and 1d basis class
         self.line = subclass_where(BaseShape, name='line')(
-            {8: 2}[n_spts], cfg
+            {8: 2}[nspts], cfg
         )
         p_basiscls = subclass_where(BaseShape, name='quad')
 
         # The instance of the plane class
-        self.plane = p_basiscls({8: 4}[n_spts], cfg)
+        self.plane = p_basiscls({8: 4}[nspts], cfg)
 
         # The number of solution points in the plane and the line
-        self.n_upts_line = n_upts_line = self.line.upts.shape[0]
-        n_upts_plane = self.plane.upts.shape[0]
+        self.nupts_line = nupts_line = self.line.upts.shape[0]
+        nupts_plane = self.plane.upts.shape[0]
 
-        n_upts = self.basis.upts.shape[0]
+        nupts = self.basis.upts.shape[0]
 
-        self.splits = np.cumsum([n_upts_plane
-                                 for _ in range(n_upts_line)])[:-1]
+        self.splits = np.cumsum([nupts_plane
+                                 for _ in range(nupts_line)])[:-1]
 
         self.idx = []
         # Iterate over each element, p:plocs, s: solution
@@ -112,7 +122,60 @@ class SpatialAverage(BasePlugin):
             c = p[self.swaps[self.directions], ...]
 
             # Get the sorted order of elements wrt direction
-            self.idx.append(fuzzysort(c, range(n_upts)))
+            self.idx.append(fuzzysort(c, range(nupts)))
+
+        self.wts_array = np.zeros([nupts_line, nupts, neles])
+
+        for ei, I in enumerate(self.idx):
+            for lp, i in enumerate(np.split(I, self.splits)):
+                self.wts_array[lp, i, ei] = self.plane.upts_wts
+
+        self.wts_array /= 4
+
+        self.wts_buf = intg.backend.const_matrix(self.wts_array, tags={'align'})
+
+        tags = {'align'}
+
+        self.exprs_buf = exprs_buf = intg.backend.matrix((nupts, nexprs, neles),
+                                        extent='exprs_buf', tags=tags)
+
+        self.line_buf = line_buf = intg.backend.matrix((nupts_line, nexprs, neles),
+                                        extent='line_sol', tags=tags)
+
+        tplargs = dict(ndims=self.ndims, nvars=self.nvars,
+                       c=self.cfg.items_as('constants', float))
+        tplargs['nupts'] = nupts
+        tplargs['nupts_line'] = nupts_line
+        tplargs['nvars'] = self.nvars
+        tplargs['nexprs'] = nexprs
+        tplargs['exprs'] = self.exprs
+
+        intg.backend.pointwise.register('pyfr.plugins.kernels.exprs')
+        intg.backend.pointwise.register('pyfr.plugins.kernels.linesol')
+
+        self.eles_scal_upts_inb = inb = intg.system.eles_scal_upts_inb[0]
+        print(inb, exprs_buf)
+        self._kernels = {'exprs': proxylist(), 'linesol': proxylist()}
+
+        self._kernels['exprs'].append(
+            intg.backend.kernel(
+                'exprs', tplargs, dims=[nupts, neles],
+                u = inb,
+                e = exprs_buf
+            )
+        )
+        self._kernels['linesol'].append(
+            intg.backend.kernel(
+                'linesol', tplargs, dims=[neles],
+                e = exprs_buf,
+                wts = self.wts_buf,
+                ls = line_buf
+            )
+        )
+
+        self._queue = intg.backend.queue()
+
+        intg.backend.commit()
 
         self.first_iteration = True
         self.nout = 0
@@ -129,7 +192,7 @@ class SpatialAverage(BasePlugin):
         subs = dict(zip(pnames, psolns), t=tcurr, **ploc)
 
         # Evaluate the expressions
-        exprs.append([npeval(v, subs) for k, v in self.exprs])
+        exprs.append([npeval(v, subs) for k, v in self.exprs_1])
 
         # Stack up the expressions for each element type and return
         # exprs comes as n_vars x n_eles x n_upts
@@ -149,51 +212,37 @@ class SpatialAverage(BasePlugin):
         # soln comes as n_upts, n_vars, n_eles
         # getting to n_vars, n_eles, n_upts
         soln = np.swapaxes(intg.soln[0], 0, 1)
+        self.eles_scal_upts_inb.active = intg._idxcurr
 
         self._run(soln, intg.tcurr, True)
 
         self.tout_next = intg.tcurr + self.dt_out
 
     def _run(self, soln, tcurr, write):
-        # soln comes as n_vars x n_upts x n_eles
-        exprs = self._eval_exprs(soln, tcurr)
-        
-        # exprs comes as n_vars x n_upts x n_eles
-        # convert to n_eles x n_vars x n_upts
-        exprs = np.rollaxis(exprs, 2, 0)
-        n_eles, n_vars, n_upts = exprs.shape
+        self._queue % self._kernels['exprs']()
+        self._queue % self._kernels['linesol']()
+        line_sol = self.line_buf.get().swapaxes(0, 2).swapaxes(1, 2).copy(order='C')
 
-        line_sol = np.zeros((n_eles, self.n_upts_line, n_vars), dtype=self.fpdtype)
+        neles, nupts_line, nexprs  = line_sol.shape
 
         if self.first_iteration:
             # Set the lineplocs
-            line_ploc_upts = np.zeros((n_eles, self.n_upts_line), dtype=self.fpdtype)
+            line_ploc_upts = np.zeros((neles, self.nupts_line), dtype=self.fpdtype)
 
-        for i, (idx, p, s) in enumerate(zip(self.idx, self.ploc_upts, exprs)):
+        for i, (idx, p) in enumerate(zip(self.idx, self.ploc_upts)):
             # Split the arrays after reordering them, now each split
             # has the plocs of the homogeneous direction plane
             # and the homogeneous direction solution.
-            for pi, (pse, sse) in enumerate(
-                    zip(np.split(p[:, idx], self.splits, 1),
-                        np.split(s[:, idx], self.splits, 1))
-            ):
+            for pi, pse in enumerate(np.split(p[:, idx], self.splits, 1)):
                 # Actual ploc of the non-homogeneous direction
                 hd = pse[self.swaps[self.directions][0]]
 
                 # Uncomment to enable check
                 assert np.max(np.abs(hd - hd[0])) < 1e-8
 
-                # Integrate the variables and divide by the std-element
-                # area, which is 4
-                vals = np.dot(sse, self.plane.upts_wts) / 4
-
                 if self.first_iteration:
                     # Set the lineplocs
                     line_ploc_upts[i, pi] = hd[0]
-
-                # Set the solution
-                line_sol[i, pi, :] = vals
-
 
         # MPI info
         comm, rank, root = get_comm_rank_root()
@@ -236,34 +285,34 @@ class SpatialAverage(BasePlugin):
             # Wait for the remote data
             MPI.Prequest.Startall(self._mpi_rreqs)
             MPI.Prequest.Waitall(self._mpi_rreqs)
-            line_sols = [l.reshape([-1, n_vars]) for l in self._mpi_rbufs]
+            line_sols = [l.reshape([-1, nexprs]) for l in self._mpi_rbufs]
 
             line_sols = np.concatenate(line_sols)
             a = [(c, np.average(line_sols[l, :], axis=0))
                  for c, l in self.lists]
             coords, data = zip(*a)
 
-            if self.first_iteration:
-                n_upts = self.line.upts.shape[0]
-
-                crd = np.array(coords)
-                n_eles = int(crd.shape[0]/self.line.upts.shape[0])
-
-                cent = crd.reshape([n_eles, -1]).mean(axis=1)
-                el_length = (crd - np.repeat(cent, n_upts)
-                             ).reshape([-1, n_upts])[:, 0]/self.line.upts[0]
-
-                self.wts = (np.tile(self.line.upts_wts, n_eles) *
-                            np.repeat(el_length, n_upts))
-
-                self.h = np.dot(np.zeros([n_eles*n_upts])+1, self.wts)
-
             data = np.array(data)
+            crd = np.array(coords)
+            if self.first_iteration:
+                print(crd.shape, data.shape)
+                neles_line_single = int(crd.shape[0]/self.line.upts.shape[0])
+
+                cent = crd.reshape([neles_line_single, -1]).mean(axis=1)
+                el_length = (crd - np.repeat(cent, nupts_line)
+                             ).reshape([-1, nupts_line])[:, 0]/self.line.upts[0]
+
+                self.wts = (np.tile(self.line.upts_wts, neles_line_single) *
+                            np.repeat(el_length, nupts_line))
+
+                self.h = np.dot(np.zeros([neles_line_single*nupts_line])+1, self.wts)
+
+
             u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
 
             u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
 
-            data = np.hstack((np.array(coords)[:, np.newaxis], data))
+            data = np.hstack((crd[:, np.newaxis], data))
             header = 'y ' + ' '.join([k.replace('avg-', '')
                                       for k, e in self.exprs])
 
