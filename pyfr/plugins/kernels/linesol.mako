@@ -6,12 +6,20 @@
               wts='in fpdtype_t[${str(nupts_line)}][${str(nupts)}]'
               ls='out fpdtype_t[${str(nupts_line)}][${str(nexprs)}]'
               >
+
+
+for(int li=0;li<${nupts_line};li++)
+{
 % for ei in range(nexprs):
-% for li in range(nupts_line):
-ls[${li}][${ei}] = 0.0;
-% for ui in range(nupts):
-ls[${li}][${ei}] += wts[${li}][${ui}]*e[${ui}][${ei}];
+ls[li][${ei}] = 0.0;
 % endfor
+
+
+for(int ui=0; ui<${nupts}; ui++)
+{
+% for ei in range(nexprs):
+ls[li][${ei}]  += wts[li][ui]*e[ui][${ei}];
 % endfor
-% endfor
+}
+}
 </%pyfr:kernel>
