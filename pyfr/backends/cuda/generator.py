@@ -112,7 +112,7 @@ class CUDAKernelGenerator(BaseKernelGenerator):
 
     def _emit_body(self):
         body = self.body
-        ptns = [r'\b{0}\b', r'\b{0}\[((?:\d+)|(?:[^\d\W]\w+))\]', r'\b{0}\[((?:\d+)|(?:[^\d\W]\w+))\]\[((?:\d+)|(?:[^\d\W]\w+))\]']
+        ptns = [r'\b{0}\b', r'\b{0}\[((?:\d+)|(?:[^\d\W]\w*))\]', r'\b{0}\[((?:\d+)|(?:[^\d\W]\w*))\]\[((?:\d+)|(?:[^\d\W]\w*))\]']
         for va in self.vectargs:
             # Dereference the argument
             if va.isview:

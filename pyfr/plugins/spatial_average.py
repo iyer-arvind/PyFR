@@ -43,10 +43,6 @@ class SpatialAverage(BasePlugin):
 
         # Expressions to time average
         c = self.cfg.items_as('constants', float)
-        self.exprs_1 = [(k, self.cfg.getexpr(cfgsect, k, subs=c))
-                      for k in self.cfg.items(cfgsect)
-                      if k.startswith('avg-')]
-
         c.update({vn:'v[{:d}]'.format(vc) for vc, vn in enumerate('uvw'[:self.ndims])})
         self.exprs = [(k, self.cfg.getexpr(cfgsect, k, subs=c))
                       for k in self.cfg.items(cfgsect)
@@ -136,10 +132,10 @@ class SpatialAverage(BasePlugin):
         tags = {'align'}
 
         self.exprs_buf = exprs_buf = intg.backend.matrix((nupts, nexprs, neles),
-                                        extent='exprs_buf', tags=tags)
+                                        extent='exprs_buf-{:s}'.format(cfgsect), tags=tags)
 
         self.line_buf = line_buf = intg.backend.matrix((nupts_line, nexprs, neles),
-                                        extent='line_sol', tags=tags)
+                                        extent='line_sol-{:s}'.format(cfgsect), tags=tags)
 
         tplargs = dict(ndims=self.ndims, nvars=self.nvars,
                        c=self.cfg.items_as('constants', float))
@@ -153,7 +149,6 @@ class SpatialAverage(BasePlugin):
         intg.backend.pointwise.register('pyfr.plugins.kernels.linesol')
 
         self.eles_scal_upts_inb = inb = intg.system.eles_scal_upts_inb[0]
-        print(inb, exprs_buf)
         self._kernels = {'exprs': proxylist(), 'linesol': proxylist()}
 
         self._kernels['exprs'].append(
@@ -179,24 +174,6 @@ class SpatialAverage(BasePlugin):
         self.first_iteration = True
         self.nout = 0
 
-    def _eval_exprs(self, soln, tcurr):
-        exprs = []
-
-        # Get the primitive variable names and solutions
-        pnames = self.elementscls.privarmap[self.ndims]
-        psolns = self.elementscls.con_to_pri(soln, self.cfg)
-
-        # Prepare the substitutions dictionary
-        ploc = dict(zip('xyz', self.ploc_upts.swapaxes(0, 1)))
-        subs = dict(zip(pnames, psolns), t=tcurr, **ploc)
-
-        # Evaluate the expressions
-        exprs.append([npeval(v, subs) for k, v in self.exprs_1])
-
-        # Stack up the expressions for each element type and return
-        # exprs comes as n_vars x n_eles x n_upts
-        return np.dstack(exprs)
-
     def _get_output_path(self, tcurr):
 
         # Substitute {t} and {n} for the current time and output number
@@ -207,17 +184,13 @@ class SpatialAverage(BasePlugin):
     def __call__(self, intg):
         if abs(self.tout_next - intg.tcurr) > self.tol:
             return
-
-        # soln comes as n_upts, n_vars, n_eles
-        # getting to n_vars, n_eles, n_upts
-        soln = np.swapaxes(intg.soln[0], 0, 1)
         self.eles_scal_upts_inb.active = intg._idxcurr
-
-        self._run(soln, intg.tcurr, True)
+        self._run(intg.tcurr, True)
 
         self.tout_next = intg.tcurr + self.dt_out
 
-    def _run(self, soln, tcurr, write):
+    def _run(self, tcurr, write):
+
         self._queue % self._kernels['exprs']()
         self._queue % self._kernels['linesol']()
         line_sol = self.line_buf.get().swapaxes(0, 2).swapaxes(1, 2).copy(order='C')
@@ -293,7 +266,6 @@ class SpatialAverage(BasePlugin):
             data = np.array(data)
             crd = np.array(coords)
             if self.first_iteration:
-                print(crd.shape, data.shape)
                 neles_line_single = int(crd.shape[0]/self.line.upts.shape[0])
 
                 cent = crd.reshape([neles_line_single, -1]).mean(axis=1)
@@ -305,21 +277,25 @@ class SpatialAverage(BasePlugin):
 
                 self.h = np.dot(np.zeros([neles_line_single*nupts_line])+1, self.wts)
 
+            try:
+                u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
+                u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
 
-            u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
+            except Exception:
+                u_bulk = 1.0
 
-            u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
-
-            data = np.hstack((crd[:, np.newaxis], data))
-            header = 'y ' + ' '.join([k.replace('avg-', '')
-                                      for k, e in self.exprs])
 
             if write:
+                data = np.hstack((crd[:, np.newaxis], data))
+                header = 'y ' + ' '.join([k.replace('avg-', '')
+                                          for k, e in self.exprs])
+
                 np.savetxt(self._get_output_path(tcurr), data, header=header)
                 self.nout += 1
         else:
             # Send data to root
             comm.Send(line_sol, root, 0)
+
 
         self.first_iteration = False
         return u_bulk

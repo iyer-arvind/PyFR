@@ -71,15 +71,14 @@ class BulkFlowController(SpatialAverage):
         self.ubulk = self.cfg.getfloat(cfgsect, 'ubulk')
 
         self.pid = PIDController(intg, cfgsect)
-        self.err_avg = 1.0
+        self.err_avg = 0.0
 
     def __call__(self, intg):
         if intg.nacptsteps % self.nsteps:
             return
 
-        soln = np.swapaxes(intg.soln[0], 0, 1)
-
-        u_bulk = self._run(soln, intg.tcurr, False)
+        self.eles_scal_upts_inb.active = intg._idxcurr
+        u_bulk = self._run(intg.tcurr, False)
         comm, rank, root = get_comm_rank_root()
 
         if rank == root:
