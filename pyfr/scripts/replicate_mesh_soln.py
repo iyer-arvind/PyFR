@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 from collections import defaultdict
+import configparser
+import io
 import h5py
 import numpy as np
 import re
@@ -44,9 +46,10 @@ def join_soln(d, po, eo, in_mesh, in_soln, out_mesh, out_soln):
             nupts, neles, ndims = spt.shape
             
             spt += d[np.newaxis, np.newaxis, :]
-            print(d)
-            out_mesh['spt_{}_p{}'.format(ename, int(epn)+po)] = spt
 
+            print(d)
+
+            out_mesh['spt_{}_p{}'.format(ename, int(epn)+po)] = spt
             out_soln['soln_{}_p{}'.format(ename, int(epn)+po)] = in_soln['soln_{}_p{}'.format(ename, int(epn))].value
 
             poff += 1
@@ -60,7 +63,16 @@ def join_soln(d, po, eo, in_mesh, in_soln, out_mesh, out_soln):
                 u = uuid.uuid4()
                 out_mesh['mesh_uuid'] = out_soln['mesh_uuid'] = str(u)
                 out_soln['config'] = in_soln['config'].value
-                out_soln['stats'] = in_soln['stats'].value
+
+                stats = configparser.ConfigParser()
+                stats.read_string(in_soln['stats'].value.decode())
+                stats['solver-time-integrator']['tcurr'] = '0'
+                stats['solver-time-integrator']['wall-time'] = '0.0'
+                stats['solver-time-integrator']['nsteps'] = '0'
+                stats['solver-time-integrator']['nfevals'] = '0'
+                buf = io.StringIO()
+                stats.write(buf)
+                out_soln['stats'] = buf.getvalue().encode()
             continue
 
         print(k)

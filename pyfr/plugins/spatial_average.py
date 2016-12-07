@@ -263,12 +263,8 @@ class SpatialAverage(BasePlugin):
                  for c, l in self.lists]
             coords, data = zip(*a)
 
-
             data = np.array(data)
             crd = np.array(coords)
-            dc = crd[1:] - crd[:-1]
-            count = len(np.where(dc>0.5)[0])+1
-            
             if self.first_iteration:
                 neles_line_single = int(crd.shape[0]/self.line.upts.shape[0])
 
@@ -282,9 +278,8 @@ class SpatialAverage(BasePlugin):
                 self.h = np.dot(np.zeros([neles_line_single*nupts_line])+1, self.wts)
 
             try:
-                
                 u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
-                u_bulk = np.dot(data[:, u_idx], self.wts)/self.h/count
+                u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
 
             except Exception:
                 u_bulk = 1.0
