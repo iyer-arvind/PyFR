@@ -149,7 +149,6 @@ class SpatialAverage(BasePlugin):
         # soln comes as n_upts, n_vars, n_eles
         # getting to n_vars, n_eles, n_upts
         soln = np.swapaxes(intg.soln[0], 0, 1)
-
         self._run(soln, intg.tcurr, True)
 
         self.tout_next = intg.tcurr + self.dt_out
@@ -258,10 +257,12 @@ class SpatialAverage(BasePlugin):
 
                 self.h = np.dot(np.zeros([n_eles*n_upts])+1, self.wts)
 
+            c = np.array(coords)
             data = np.array(data)
+            dc = c[1:] - c[:-1]
+            count = len(np.where(dc>0.5)[0])+1
             u_idx = [i for i, e in enumerate(self.exprs) if e[0] == 'avg-u'][0]
-
-            u_bulk = np.dot(data[:, u_idx], self.wts)/self.h
+            u_bulk = np.dot(data[:, u_idx], self.wts)/self.h/count
 
             data = np.hstack((np.array(coords)[:, np.newaxis], data))
             header = 'y ' + ' '.join([k.replace('avg-', '')
