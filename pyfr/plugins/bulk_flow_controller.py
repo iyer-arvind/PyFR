@@ -39,7 +39,7 @@ class PIDController(object):
 
         else:
             d = (err-self.err_prev) / dt * self.d_constant
-            self.err_accm += (err + self.err_prev) * dt * 0.5
+            self.err_accm = self.err_accm*0.99 + (err + self.err_prev) * dt * 0.5
 
         i = self.err_accm * self.i_constant
 
