@@ -3,6 +3,7 @@
 import itertools as it
 import os
 import re
+import time
 
 import h5py
 import numpy as np
@@ -88,7 +89,9 @@ class NativeWriter(object):
         path = self._get_output_path(tcurr)
 
         # Delegate to _write to do the actual outputting
+        t0 = time.time()
         self._write(path, data, metadata)
+        print('Time to write "{}": {}s'.format(path, time.time() - t0))
 
         # Increment the output number
         self.nout += 1
