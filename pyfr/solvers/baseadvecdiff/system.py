@@ -12,7 +12,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         self.eles_scal_upts_inb.active = uinbank
         self.eles_scal_upts_outb.active = foutbank
 
-        p_corr = self.cfg.p_corr
+        p_corr = getattr(self.cfg, 'p_corr', 0.0)
 
         q1 << kernels['eles', 'disu']()
         q1 << kernels['mpiint', 'scal_fpts_pack']()
