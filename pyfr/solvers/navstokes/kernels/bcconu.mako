@@ -9,6 +9,7 @@
               ulout='out view fpdtype_t[${str(nvars)}]'
               nlin='in fpdtype_t[${str(ndims)}]'
               ploc='in fpdtype_t[${str(ndims)}]'
-              t='scalar fpdtype_t'>
-    ${pyfr.expand('bc_ldg_state', 'ulin', 'nlin', 'ulout', 'ploc', 't')};
+              t='scalar fpdtype_t'
+              p_corr='scalar fpdtype_t'>
+    ${pyfr.expand('bc_ldg_state', 'ulin', 'nlin', 'ulout', 'ploc', 't', 'p_corr')};
 </%pyfr:kernel>

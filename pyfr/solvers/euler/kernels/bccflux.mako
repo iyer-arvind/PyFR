@@ -13,7 +13,7 @@
               t='scalar fpdtype_t'>
     // Compute the RHS
     fpdtype_t ur[${nvars}];
-    ${pyfr.expand('bc_rsolve_state', 'ul', 'nl', 'ur', 'ploc', 't')};
+    ${pyfr.expand('bc_rsolve_state', 'ul', 'nl', 'ur', 'ploc', 't', 'p_corr')};
 
     // Perform the Riemann solve
     fpdtype_t fn[${nvars}];

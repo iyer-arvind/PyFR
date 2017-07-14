@@ -12,6 +12,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         self.eles_scal_upts_inb.active = uinbank
         self.eles_scal_upts_outb.active = foutbank
 
+        p_corr = self.cfg.p_corr
+
         q1 << kernels['eles', 'disu']()
         q1 << kernels['mpiint', 'scal_fpts_pack']()
         runall([q1])
@@ -21,7 +23,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         if ('iint', 'copy_fpts') in kernels:
             q1 << kernels['iint', 'copy_fpts']()
         q1 << kernels['iint', 'con_u']()
-        q1 << kernels['bcint', 'con_u'](t=t)
+        q1 << kernels['bcint', 'con_u'](t=t, p_corr=p_corr)
         if ('eles', 'shocksensor') in kernels:
             q1 << kernels['eles', 'shocksensor']()
             q1 << kernels['mpiint', 'artvisc_fpts_pack']()
@@ -49,7 +51,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         q1 << kernels['eles', 'tdisf']()
         q1 << kernels['eles', 'tdivtpcorf']()
         q1 << kernels['iint', 'comm_flux']()
-        q1 << kernels['bcint', 'comm_flux'](t=t)
+        q1 << kernels['bcint', 'comm_flux'](t=t, p_corr=p_corr)
 
         q2 << kernels['mpiint', 'vect_fpts_send']()
         q2 << kernels['mpiint', 'vect_fpts_recv']()

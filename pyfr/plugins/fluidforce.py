@@ -165,10 +165,13 @@ class FluidForcePlugin(BasePlugin):
 
                 # Do the quadrature
                 f[ndims:] += np.einsum('i...,klij,jil', qwts, vis, norms)
+        
 
         # Reduce and output if we're the root rank
         if rank != root:
             comm.Reduce(f, None, op=get_mpi('sum'), root=root)
+            row = []
+
         else:
             comm.Reduce(get_mpi('in_place'), f, op=get_mpi('sum'), root=root)
 
@@ -180,6 +183,8 @@ class FluidForcePlugin(BasePlugin):
 
             # Flush to disk
             self.outf.flush()
+
+        return row
 
     def stress_tensor(self, u, du):
         c = self._constants

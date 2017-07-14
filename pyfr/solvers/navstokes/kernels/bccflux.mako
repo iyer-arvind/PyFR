@@ -15,6 +15,7 @@
               nl='in fpdtype_t[${str(ndims)}]'
               magnl='in fpdtype_t'
               ploc='in fpdtype_t[${str(ndims)}]'
-              t='scalar fpdtype_t'>
-    ${pyfr.expand('bc_common_flux_state', 'ul', 'gradul', 'artviscl', 'nl', 'magnl', 'ploc', 't')};
+              t='scalar fpdtype_t'
+              p_corr='scalar fpdtype_t'>
+    ${pyfr.expand('bc_common_flux_state', 'ul', 'gradul', 'artviscl', 'nl', 'magnl', 'ploc', 't', 'p_corr')};
 </%pyfr:kernel>

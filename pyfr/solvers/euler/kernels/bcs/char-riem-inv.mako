@@ -4,9 +4,10 @@
 <% gmo = c['gamma'] - 1.0 %>
 <% gamma = c['gamma'] %>
 
-<%pyfr:macro name='bc_rsolve_state' params='ul, nl, ur, ploc, t'>
-    fpdtype_t cs = sqrt(${gamma}*${c['p']}/${c['rho']});
-    fpdtype_t s = ${c['p']}*pow(${c['rho']}, -${gamma});
+<%pyfr:macro name='bc_rsolve_state' params='ul, nl, ur, ploc, t, p_corr'>
+    fpdtype_t p = ${c['p']} + p_corr;
+    fpdtype_t cs = sqrt(${gamma}*p/${c['rho']});
+    fpdtype_t s = p*pow(${c['rho']}, -${gamma});
     fpdtype_t ratio = cs*${2.0/gmo};
 
     fpdtype_t inv = 1.0/ul[0];
