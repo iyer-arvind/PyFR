@@ -88,6 +88,9 @@ class NativeWriter(object):
         # Determine the output path
         path = self._get_output_path(tcurr)
 
+        # Convert
+        data = [d.astype(self.fpdtype, copy=False) for d in data]
+
         # Delegate to _write to do the actual outputting
         t0 = time.time()
         self._write(path, data, metadata)
