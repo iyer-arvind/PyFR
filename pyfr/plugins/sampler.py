@@ -16,7 +16,7 @@ def _closest_upts_bf(etypes, eupts, pts):
 
         # Dereference to get the actual distances and locations
         dmins = [d[a] for d, a in zip(dists, amins)]
-        plocs = [e[a] for e, a in zip(eupts, amins)]
+        plocs = [e[a].tolist() for e, a in zip(eupts, amins)]
 
         # Find the minimum across all element types
         yield min(zip(dmins, plocs, etypes, amins))
@@ -40,7 +40,7 @@ def _closest_upts_kd(etypes, eupts, pts):
                  for i, e in zip(amins, eupts)]
 
         # Dereference to obtain the precise locations
-        plocs = [e[a] for e, a in zip(eupts, amins)]
+        plocs = [e[a].tolist() for e, a in zip(eupts, amins)]
 
         # Reduce across element types
         yield min(zip(dmins, plocs, etypes, amins))
