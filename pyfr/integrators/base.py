@@ -49,8 +49,8 @@ class BaseIntegrator(object, metaclass=ABCMeta):
         self.nacptchain = 0
 
         # Current and minimum time steps
-        self._dt = self.cfg.getfloat('solver-time-integrator', 'dt')
-        self.dtmin = 1.0e-12
+        self._dt = cfg.getfloat('solver-time-integrator', 'dt')
+        self.dtmin = cfg.getfloat('solver-time-integrator', 'dt-min', 1e-12)
 
         # Determine the amount of temp storage required by this method
         nreg = self._stepper_nregs
